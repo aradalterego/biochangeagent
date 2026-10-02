@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth/session";
+import { requireRole } from "@/lib/auth/session";
 import { actorFromSession } from "@/lib/authz";
 import { sql } from "@/lib/db";
 import { listKnowledgeGaps } from "@/server/domain/gaps";
@@ -8,7 +8,7 @@ import { Badge, Empty, Page, PageHeader } from "@/components/ui";
 import { fmtDate } from "@/lib/format";
 
 export default async function GapsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
-  const user = await requireUser();
+  const user = await requireRole(["biochange_admin", "biochange_medical"]);
   const sp = await searchParams;
   const status = ["open", "resolved", "dismissed"].includes(sp.status ?? "") ? sp.status! : "open";
   const gaps = await listKnowledgeGaps(actorFromSession(user), status);

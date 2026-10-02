@@ -74,14 +74,14 @@ Web UI (Next.js)                     future: WhatsApp / Messenger / RCS adapters
 npm install
 cp .env.example .env            # set DATABASE_URL, OPENAI_API_KEY
 npm run db:migrate              # schema + RLS
-npm run db:seed                 # reference data + demo clinic/accounts
+SEED_DEMO=true DEMO_PASSWORD='DemoVet2026!' npm run db:seed   # reference data + demo clinic/accounts
 npm run kb:ingest-website       # fetch biochange.life pages + the ReGum study PDF (PENDING REVIEW)
 npm run dev                     # http://localhost:3000
 ```
 
 A quick local Postgres with pgvector: `docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres pgvector/pgvector:pg16`.
 
-### Demo accounts (seeded; password `DemoVet2026!` or `DEMO_PASSWORD`)
+### Demo accounts (seeded with `SEED_DEMO=true`; password = `DEMO_PASSWORD`)
 
 | Email | Role |
 |---|---|
@@ -90,7 +90,7 @@ A quick local Postgres with pgvector: `docker run -p 5432:5432 -e POSTGRES_PASSW
 | `admin@demo.biochange.test` | BioChange Admin |
 | `medical@demo.biochange.test` | BioChange Medical |
 
-The demo seed refuses to run when `NODE_ENV=production`. Use `SEED_DEMO=false` there.
+Demo data is opt-in: it needs `SEED_DEMO=true` and a `DEMO_PASSWORD`, and it is refused for any non-local database unless `ALLOW_DEMO_IN_PRODUCTION=true`.
 
 ## OpenAI configuration
 
@@ -135,7 +135,7 @@ The demo sources tagged `demo-mock` are built only from public product-page text
    - Database → Extensions: `vector` is available (the migration enables it).
    - Storage: create a **private** bucket called `private-files` (do **not** make it public).
    - Copy the database connection string. For serverless, use the transaction pooler (port 6543), which is supported.
-2. Run migrations against Supabase: `DATABASE_URL=… npm run db:migrate`, then `SEED_DEMO=false npm run db:seed`, then `admin:bootstrap`.
+2. Run migrations against Supabase: `DATABASE_URL=… npm run db:migrate`, then `npm run db:seed` (reference data only), then `admin:bootstrap`.
    - RLS is enabled on every table **with no policies**, and table privileges are revoked from `anon` and `authenticated`. Supabase's public REST API therefore exposes nothing. All access goes through the server.
 3. **Vercel**: import the repo and set these environment variables:
    `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `STORAGE_DRIVER=supabase`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `APP_URL`.
@@ -171,7 +171,7 @@ npm run build
 | Script | Description |
 |---|---|
 | `db:migrate` / `db:reset` | Apply migrations / drop and recreate everything, then seed (dev only) |
-| `db:seed` | Reference data (+ demo data unless `SEED_DEMO=false`) |
+| `db:seed` | Reference data (+ demo data when `SEED_DEMO=true` and `DEMO_PASSWORD` are set) |
 | `admin:bootstrap` | Create or reset a BioChange admin |
 | `kb:ingest-website` | Fetch and parse registered URL sources (they stay pending review) |
 | `kb:reindex` | Rebuild chunks and embeddings for approved sources |

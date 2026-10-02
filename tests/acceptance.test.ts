@@ -24,7 +24,7 @@ describe("V1 acceptance loop", () => {
   let orderId = "";
 
   it("logs the veterinarian in and knows who they are", async () => {
-    const res = await attemptLogin(VET, process.env.DEMO_PASSWORD || "DemoVet2026!", "127.0.0.1");
+    const res = await attemptLogin(VET, "DemoVet2026!", "127.0.0.1");
     expect(res.ok).toBe(true);
     const bad = await attemptLogin(VET, "wrong-password-1", "127.0.0.1");
     expect(bad.ok).toBe(false);

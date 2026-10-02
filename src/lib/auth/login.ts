@@ -1,5 +1,5 @@
 import "server-only";
-import { sql } from "@/lib/db";
+import { sql, type Tx } from "@/lib/db";
 import crypto from "node:crypto";
 import { hashPassword, verifyPassword } from "./password";
 
@@ -14,7 +14,16 @@ export type LoginResult = { ok: true; userId: string } | { ok: false; reason: "i
 
 export async function attemptLogin(email: string, password: string, ip: string | null): Promise<LoginResult> {
   const normalized = email.trim().toLowerCase();
-  const [{ by_email, by_ip }] = await sql<{ by_email: number; by_ip: number }[]>`
+  // Serialise attempts per email so parallel guesses cannot all pass the failure count
+  // before any failure is recorded.
+  return sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${`login:${normalized}`}))`;
+    return checkAndVerify(tx, normalized, password, ip);
+  });
+}
+
+async function checkAndVerify(db: Tx, normalized: string, password: string, ip: string | null): Promise<LoginResult> {
+  const [{ by_email, by_ip }] = await db<{ by_email: number; by_ip: number }[]>`
     SELECT
       (SELECT count(*)::int FROM login_attempts WHERE email = ${normalized} AND NOT success
          AND attempted_at > now() - make_interval(mins => ${WINDOW_MINUTES})) AS by_email,
@@ -24,12 +33,12 @@ export async function attemptLogin(email: string, password: string, ip: string |
     return { ok: false, reason: "locked" };
   }
 
-  const [user] = await sql<{ id: string; password_hash: string | null; active: boolean }[]>`
+  const [user] = await db<{ id: string; password_hash: string | null; active: boolean }[]>`
     SELECT id, password_hash, active FROM users WHERE email = ${normalized}`;
   const valid = await verifyPassword(password, user?.password_hash ?? (await getDummyHash()));
   const success = Boolean(user && user.active && user.password_hash && valid);
 
-  await sql`INSERT INTO login_attempts (email, ip, success) VALUES (${normalized}, ${ip}, ${success})`;
+  await db`INSERT INTO login_attempts (email, ip, success) VALUES (${normalized}, ${ip}, ${success})`;
   if (!success || !user) return { ok: false, reason: "invalid" };
   return { ok: true, userId: user.id };
 }

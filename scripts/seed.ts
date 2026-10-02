@@ -2,8 +2,8 @@
  * Seeds reference data (products, knowledge source registry, education resources) and,
  * unless disabled, a demo clinic with demo accounts, a demo case, inventory and orders.
  *
- *   npm run db:seed                 # reference + demo data (refused in production)
- *   SEED_DEMO=false npm run db:seed # reference data only
+ *   npm run db:seed                                           # reference data only
+ *   SEED_DEMO=true DEMO_PASSWORD='…' npm run db:seed          # + demo clinic/accounts (local DB only)
  */
 import "dotenv/config";
 import { sql, closeDb } from "@/lib/db";
@@ -11,14 +11,20 @@ import { hashPassword } from "@/lib/auth/password";
 import { indexSource } from "@/server/knowledge/sources";
 import { recomputeAdoption } from "@/server/domain/adoption";
 
-const DEMO = process.env.SEED_DEMO !== "false";
-const DEMO_PASSWORD = process.env.DEMO_PASSWORD || "DemoVet2026!";
+// Demo data is opt-in and needs an explicit password (fail closed).
+const DEMO = process.env.SEED_DEMO === "true";
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? "";
 const days = (n: number) => new Date(Date.now() + n * 864e5);
 const dateStr = (d: Date) => d.toISOString().slice(0, 10);
 
 async function main() {
-  if (DEMO && process.env.NODE_ENV === "production" && process.env.ALLOW_DEMO_IN_PRODUCTION !== "true") {
-    throw new Error("Refusing to seed demo accounts in production. Set SEED_DEMO=false (or ALLOW_DEMO_IN_PRODUCTION=true for a staging environment).");
+  if (DEMO) {
+    if (DEMO_PASSWORD.length < 10) throw new Error("SEED_DEMO=true requires DEMO_PASSWORD (at least 10 characters).");
+    const host = new URL(process.env.DATABASE_URL ?? "postgres://localhost").hostname;
+    const local = ["localhost", "127.0.0.1", "::1"].includes(host);
+    if ((!local || process.env.NODE_ENV === "production") && process.env.ALLOW_DEMO_IN_PRODUCTION !== "true") {
+      throw new Error(`Refusing to seed demo accounts into a non-local database (${host}). Set ALLOW_DEMO_IN_PRODUCTION=true only for a disposable staging environment.`);
+    }
   }
   const [{ n }] = await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM products`;
   if (n > 0 && !process.argv.includes("--force")) {

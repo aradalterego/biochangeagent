@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireUser } from "@/lib/auth/session";
+import { requireRole } from "@/lib/auth/session";
 import { actorFromSession, NotFoundError } from "@/lib/authz";
 import { sql } from "@/lib/db";
 import { getSource } from "@/server/knowledge/sources";
@@ -15,7 +15,7 @@ import { Badge, Page, PageHeader, Section, statusTone } from "@/components/ui";
 import { fmtDateTime } from "@/lib/format";
 
 export default async function SourceReviewPage({ params }: { params: Promise<{ id: string }> }) {
-  const user = await requireUser();
+  const user = await requireRole(["biochange_admin", "biochange_medical"]);
   const { id } = await params;
   if (!isUuid(id)) notFound();
   let s;

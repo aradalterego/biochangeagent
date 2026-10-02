@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth/session";
+import { requireRole } from "@/lib/auth/session";
 import { createSourceAction } from "@/app/actions/admin";
 import { ActionForm } from "@/components/ActionForm";
 import { SourceFields } from "@/components/SourceFields";
@@ -6,7 +6,7 @@ import { Page, PageHeader } from "@/components/ui";
 import { allowedHosts } from "@/server/knowledge/fetch";
 
 export default async function NewSourcePage() {
-  await requireUser();
+  await requireRole(["biochange_admin", "biochange_medical"]);
   return (
     <Page>
       <PageHeader title="Add knowledge source" subtitle="Upload a file or enter an approved URL. The source is parsed and stays PENDING REVIEW until approved." />

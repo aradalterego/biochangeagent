@@ -95,6 +95,13 @@ export async function requireRole(roles: Role[]): Promise<SessionUser> {
   return user;
 }
 
+/**
+ * Client IP for rate limiting. Prefers headers set by the hosting platform; otherwise uses the
+ * RIGHTMOST X-Forwarded-For entry (added by our own proxy), never the client-controlled leftmost one.
+ */
 export function clientIp(h: Headers): string | null {
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || null;
+  const platform = h.get("x-vercel-forwarded-for") ?? h.get("x-real-ip");
+  if (platform) return platform.split(",")[0].trim();
+  const xff = h.get("x-forwarded-for")?.split(",").map((s) => s.trim()).filter(Boolean);
+  return xff?.length ? xff[xff.length - 1] : null;
 }

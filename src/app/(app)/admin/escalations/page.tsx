@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth/session";
+import { requireRole } from "@/lib/auth/session";
 import { actorFromSession } from "@/lib/authz";
 import { listEscalations } from "@/server/domain/escalations";
 import { Badge, Empty, Page, PageHeader, statusTone } from "@/components/ui";
 import { fmtDateTime } from "@/lib/format";
 
 export default async function EscalationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
-  const user = await requireUser();
+  const user = await requireRole(["biochange_admin", "biochange_medical"]);
   const sp = await searchParams;
   const rows = await listEscalations(actorFromSession(user), sp.status || null);
   return (

@@ -1,4 +1,6 @@
 import "server-only";
+import dns from "node:dns/promises";
+import net from "node:net";
 import { env } from "@/lib/env";
 import { ValidationError } from "@/lib/authz";
 
@@ -12,6 +14,7 @@ const MAX_BYTES = 25 * 1024 * 1024;
 export async function fetchApprovedUrl(rawUrl: string): Promise<{ url: string; contentType: string; body: Buffer }> {
   let url = assertAllowed(rawUrl);
   for (let hop = 0; hop < 5; hop++) {
+    await assertPublicHost(new URL(url).hostname);
     const res = await fetch(url, {
       redirect: "manual",
       headers: { "User-Agent": "BioChangeVetCompanion/1.0 (knowledge ingestion)" },
@@ -54,4 +57,22 @@ export function assertAllowed(raw: string): string {
   if (!ok) throw new ValidationError(`Host ${host} is not on the approved ingestion list (${allowedHosts().join(", ")})`);
   u.hash = "";
   return u.toString();
+}
+
+/** Defence in depth against internal addresses behind an allowed name (e.g. a dangling DNS record). */
+async function assertPublicHost(host: string): Promise<void> {
+  const addrs = net.isIP(host) ? [{ address: host }] : await dns.lookup(host, { all: true });
+  for (const { address } of addrs) {
+    if (isPrivateAddress(address)) throw new ValidationError(`Host ${host} resolves to a non-public address`);
+  }
+}
+
+export function isPrivateAddress(ip: string): boolean {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split(".").map(Number);
+    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+  }
+  const v = ip.toLowerCase();
+  if (v.startsWith("::ffff:")) return isPrivateAddress(v.slice(7));
+  return v === "::1" || v === "::" || v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe80");
 }

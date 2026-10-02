@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireUser } from "@/lib/auth/session";
+import { requireRole } from "@/lib/auth/session";
 import { actorFromSession, NotFoundError } from "@/lib/authz";
 import { getEscalation } from "@/server/domain/escalations";
 import { isUuid } from "@/server/domain/cases";
@@ -10,7 +10,7 @@ import { Badge, Field, Page, PageHeader, Section, statusTone } from "@/component
 import { fmtDateTime } from "@/lib/format";
 
 export default async function EscalationPage({ params }: { params: Promise<{ id: string }> }) {
-  const user = await requireUser();
+  const user = await requireRole(["biochange_admin", "biochange_medical"]);
   const { id } = await params;
   if (!isUuid(id)) notFound();
   let r;

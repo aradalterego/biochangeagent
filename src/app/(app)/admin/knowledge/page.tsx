@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth/session";
+import { requireRole } from "@/lib/auth/session";
 import { actorFromSession } from "@/lib/authz";
 import { listSources, missingCriticalDocuments } from "@/server/knowledge/sources";
 import { SOURCE_TYPE_LABELS } from "@/server/knowledge/constants";
@@ -7,7 +7,7 @@ import { Badge, Page, PageHeader, Section, statusTone } from "@/components/ui";
 import { fmtDate } from "@/lib/format";
 
 export default async function KnowledgeSourcesPage({ searchParams }: { searchParams: Promise<{ status?: string; product?: string }> }) {
-  const user = await requireUser();
+  const user = await requireRole(["biochange_admin", "biochange_medical"]);
   const sp = await searchParams;
   const [sources, missing] = await Promise.all([listSources(actorFromSession(user), { status: sp.status || undefined, product: sp.product || undefined }), missingCriticalDocuments()]);
   return (

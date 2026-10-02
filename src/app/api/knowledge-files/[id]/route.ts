@@ -27,6 +27,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       "Content-Disposition": `inline; filename="${(s.file_name ?? "document").replace(/"/g, "")}"`,
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
+      // Uploaded documents must never run script in the app origin.
+      "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
     },
   });
 }

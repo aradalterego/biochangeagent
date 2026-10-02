@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth/session";
+import { requireRole } from "@/lib/auth/session";
 import { actorFromSession } from "@/lib/authz";
 import { sql } from "@/lib/db";
 import { listClaims } from "@/server/knowledge/claims";
@@ -8,7 +8,7 @@ import { ActionForm } from "@/components/ActionForm";
 import { Badge, Page, PageHeader, Section, statusTone } from "@/components/ui";
 
 export default async function ClaimsPage() {
-  const user = await requireUser();
+  const user = await requireRole(["biochange_admin", "biochange_medical"]);
   const claims = await listClaims(actorFromSession(user));
   const sources = await sql<{ id: string; title: string }[]>`SELECT id, title FROM knowledge_sources WHERE status = 'approved' ORDER BY authority_level, title`;
   const form = (c?: (typeof claims)[number]) => (

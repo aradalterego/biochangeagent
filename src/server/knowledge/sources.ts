@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { sql } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { assertKnowledgeManager, NotFoundError, ValidationError, type Actor } from "@/lib/authz";
-import { putFile, readFile } from "@/lib/storage";
+import { putFile, readFile, sanitizeFileName } from "@/lib/storage";
 import { embed, toVectorLiteral } from "@/server/ai/openai";
 import { chunkDocument } from "./chunk";
 import { CRITICAL_DOCUMENTS, DEFAULT_AUTHORITY, SOURCE_TYPES, type SourceType } from "./constants";
@@ -104,6 +104,15 @@ export async function getChunk(actor: Actor, chunkId: string) {
 
 function validateInput(input: SourceInput) {
   if (!input.title?.trim()) throw new ValidationError("Title is required.");
+  if (input.sourceUrl?.trim()) {
+    let u: URL;
+    try {
+      u = new URL(input.sourceUrl.trim());
+    } catch {
+      throw new ValidationError("Source URL is not a valid URL.");
+    }
+    if (u.protocol !== "https:") throw new ValidationError("Source URL must use https.");
+  }
   if (!SOURCE_TYPES.includes(input.sourceType)) throw new ValidationError("Unknown source type.");
   const level = input.authorityLevel ?? DEFAULT_AUTHORITY[input.sourceType];
   if (!Number.isInteger(level) || level < 1 || level > 7) throw new ValidationError("Authority level must be 1–7.");
@@ -129,7 +138,7 @@ export async function createSource(
     if (content.file) {
       const f = await putFile("knowledge", content.file.data, ["pdf", "text"], MAX_UPLOAD);
       stored = f;
-      fileName = content.file.name;
+      fileName = sanitizeFileName(content.file.name);
       parsed = f.kind === "pdf" ? await parsePdf(content.file.data) : parseText(content.file.data);
     } else if (content.fetchUrl && sourceUrl) {
       const res = await fetchApprovedUrl(sourceUrl);

@@ -127,3 +127,20 @@ describe("authorisation", () => {
     await expect(processMessage({ actor: medical, channel: "web", content: "hi", conversationId: conv.id }, { runExtraction: noExtraction })).rejects.toThrow(/not found/i);
   });
 });
+
+describe("hardening", () => {
+  it("cannot bypass the login lockout with parallel guesses", async () => {
+    const { attemptLogin } = await import("@/lib/auth/login");
+    const email = "clinic-admin@demo.biochange.test";
+    const results = await Promise.all(Array.from({ length: 10 }, () => attemptLogin(email, "wrong-password-9", "10.0.0.9")));
+    const [{ n }] = await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM login_attempts WHERE email = ${email} AND NOT success`;
+    expect(n).toBe(5);
+    expect(results.filter((r) => !r.ok && r.reason === "locked")).toHaveLength(5);
+  });
+
+  it("rejects private addresses for URL ingestion", async () => {
+    const { isPrivateAddress } = await import("@/server/knowledge/fetch");
+    for (const ip of ["10.1.2.3", "127.0.0.1", "169.254.169.254", "192.168.0.1", "172.20.0.1", "::1", "fd00::1", "::ffff:10.0.0.1"]) expect(isPrivateAddress(ip)).toBe(true);
+    for (const ip of ["104.21.3.4", "2606:4700::1"]) expect(isPrivateAddress(ip)).toBe(false);
+  });
+});

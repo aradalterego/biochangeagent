@@ -45,7 +45,8 @@ export function parseHtml(html: string, baseUrl: string): ParsedDocument {
     const href = $(el).attr("href") ?? "";
     if (/\.pdf($|\?)/i.test(href)) {
       try {
-        linkedDocuments.push({ url: new URL(href, baseUrl).toString(), label: $(el).text().trim() || href });
+        const url = new URL(href, baseUrl);
+        if (url.protocol === "https:") linkedDocuments.push({ url: url.toString(), label: $(el).text().trim() || href });
       } catch {
         /* ignore malformed links */
       }

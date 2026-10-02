@@ -100,7 +100,7 @@ export async function getCase(actor: Actor, id: string) {
     sql`SELECT id, file_type, file_name, mime_type, size_bytes, description, uploaded_at, follow_up_id FROM case_files
         WHERE case_id = ${id} ORDER BY uploaded_at`,
     sql`SELECT cv.id, cv.title, cv.last_message_at FROM case_conversations cc JOIN conversations cv ON cv.id = cc.conversation_id
-        WHERE cc.case_id = ${id} ORDER BY cv.last_message_at DESC`,
+        WHERE cc.case_id = ${id} AND cv.user_id = ${actor.userId} ORDER BY cv.last_message_at DESC`,
     sql`SELECT e.quantity, e.created_at, p.name AS product FROM inventory_events e JOIN products p ON p.id = e.product_id
         WHERE e.case_id = ${id} AND e.event_type = 'usage' ORDER BY e.created_at`,
   ]);
