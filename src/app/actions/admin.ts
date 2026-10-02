@@ -6,6 +6,7 @@ import { requireUser } from "@/lib/auth/session";
 import { actorFromSession, assertBioChangeAdmin, assertKnowledgeManager, ValidationError } from "@/lib/authz";
 import { num, runAction, str, type ActionState } from "@/lib/actions";
 import { sql } from "@/lib/db";
+import { safeTimeZone } from "@/lib/format";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblems } from "@/lib/auth/password";
 import { ROLES, type Role } from "@/lib/roles";
@@ -205,7 +206,7 @@ export async function createClinicAction(_p: ActionState, fd: FormData): Promise
     if (!name) throw new ValidationError("Clinic name is required.");
     const [c] = await sql<{ id: string }[]>`
       INSERT INTO clinics (name, country, timezone, distributor_id, estimated_dental_cases_per_month)
-      VALUES (${name}, ${str(fd, "country")}, ${str(fd, "timezone") ?? "UTC"}, ${str(fd, "distributor_id")}, ${num(fd, "estimated_dental_cases_per_month")})
+      VALUES (${name}, ${str(fd, "country")}, ${validTimeZone(str(fd, "timezone"))}, ${str(fd, "distributor_id")}, ${num(fd, "estimated_dental_cases_per_month")})
       RETURNING id`;
     await audit(actor, { action: "clinic.create", entityType: "clinic", entityId: c.id, tool: "admin", inputSummary: name });
     return "Clinic created.";
@@ -233,7 +234,7 @@ export async function createUserAction(_p: ActionState, fd: FormData): Promise<A
     const [u] = await sql<{ id: string }[]>`
       INSERT INTO users (email, name, role, clinic_id, professional_title, country, timezone, password_hash)
       VALUES (${email}, ${name}, ${role}, ${role === "veterinarian" || role === "clinic_admin" ? clinicId : null}, ${str(fd, "professional_title")},
-              ${str(fd, "country")}, ${str(fd, "timezone") ?? "UTC"}, ${await hashPassword(password)})
+              ${str(fd, "country")}, ${validTimeZone(str(fd, "timezone"))}, ${await hashPassword(password)})
       RETURNING id`;
     if (role === "veterinarian" || role === "clinic_admin") await sql`INSERT INTO veterinarian_profiles (user_id) VALUES (${u.id})`;
     await audit(actor, { action: "user.create", entityType: "user", entityId: u.id, tool: "admin", inputSummary: `${role} ${email}` });
@@ -276,4 +277,10 @@ export async function saveProductAction(_p: ActionState, fd: FormData): Promise<
   });
   revalidatePath("/admin/products");
   return r;
+}
+
+function validTimeZone(tz: string | null): string {
+  if (!tz) return "UTC";
+  if (safeTimeZone(tz) !== tz) throw new ValidationError(`Unknown timezone "${tz}". Use an IANA name such as Europe/London.`);
+  return tz;
 }

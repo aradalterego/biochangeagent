@@ -58,7 +58,7 @@ export interface CaseInput {
   outcomeNotes?: string | null;
 }
 
-const CASE_SELECT = sql`
+const CASE_SELECT = () => sql`
   SELECT c.*, p.name AS product_name, u.name AS created_by_name,
     (SELECT min(f.due_at) FROM follow_ups f WHERE f.case_id = c.id AND f.status = 'scheduled') AS next_follow_up
   FROM cases c
@@ -72,7 +72,7 @@ export async function searchCases(
   const clinicId = actor.role === "biochange_admin" && !actor.clinicId ? null : requireClinic(actor);
   const like = q.query?.trim() ? `%${q.query.trim().replace(/[%_]/g, "")}%` : null;
   return sql<CaseRow[]>`
-    ${CASE_SELECT}
+    ${CASE_SELECT()}
     WHERE c.clinic_id = ${clinicId}
       AND (${q.status ?? null}::text IS NULL OR c.status = ${q.status ?? null})
       AND (${q.tooth ?? null}::text IS NULL OR c.tooth = ${q.tooth ?? null})
@@ -84,7 +84,7 @@ export async function searchCases(
 
 export async function getCaseRow(actor: Actor, id: string): Promise<CaseRow> {
   if (!isUuid(id)) throw new NotFoundError("Case not found");
-  const [row] = await sql<CaseRow[]>`${CASE_SELECT} WHERE c.id = ${id}`;
+  const [row] = await sql<CaseRow[]>`${CASE_SELECT()} WHERE c.id = ${id}`;
   if (!row) throw new NotFoundError("Case not found");
   assertClinicRead(actor, row.clinic_id);
   return row;
@@ -121,6 +121,7 @@ export async function createCase(actor: Actor, input: CaseInput, ctx: OpContext 
   const clinicId = requireClinic(actor);
   validate(input);
   const product = input.product ? await resolveProduct(input.product) : null;
+  const today = await clinicToday(clinicId);
   const id = await sql.begin(async (tx) => {
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO cases (clinic_id, created_by, internal_patient_identifier, species, breed, age, tooth, condition_summary,
@@ -134,7 +135,7 @@ export async function createCase(actor: Actor, input: CaseInput, ctx: OpContext 
       RETURNING id`;
     if (input.pocketDepthMm != null || input.furcation) {
       await tx`INSERT INTO case_measurements (case_id, kind, measured_at, tooth, pocket_depth_mm, furcation, notes, recorded_by)
-               VALUES (${row.id}, 'baseline', ${input.treatmentDate || new Date().toISOString().slice(0, 10)}, ${input.tooth ?? null},
+               VALUES (${row.id}, 'baseline', ${input.treatmentDate || today}, ${input.tooth ?? null},
                        ${input.pocketDepthMm ?? null}, ${input.furcation ?? null}, ${input.baselineNotes ?? null}, ${actor.userId})`;
     }
     if (input.followUpDate) {
@@ -165,14 +166,24 @@ export async function updateCase(actor: Actor, id: string, input: CaseInput, ctx
     ["baselineNotes", "baseline_notes"], ["followUpDate", "follow_up_date"], ["outcomeNotes", "outcome_notes"],
   ];
   for (const [k, col] of map) if (input[k] !== undefined) set[col] = input[k] === "" ? null : input[k];
+  // status and species are required columns: "(automatic)" / blank means "leave unchanged".
+  for (const col of ["status", "species"]) if (set[col] == null) delete set[col];
   if (product) set.product_id = product.id;
   if (!Object.keys(set).length) return existing;
   await sql.begin(async (tx) => {
-    await tx`UPDATE cases SET ${tx(set)}, updated_at = now() WHERE id = ${id}`;
+    // A follow-up date is a scheduled follow-up, not just a field.
+    if (set.follow_up_date) {
+      await tx`INSERT INTO follow_ups (case_id, due_at, reason, created_by)
+               SELECT ${id}, ${set.follow_up_date as string}, 'Follow-up', ${actor.userId}
+               WHERE NOT EXISTS (SELECT 1 FROM follow_ups WHERE case_id = ${id} AND status = 'scheduled' AND due_at = ${set.follow_up_date as string})`;
+      delete set.follow_up_date;
+    }
+    if (Object.keys(set).length) await tx`UPDATE cases SET ${tx(set)}, updated_at = now() WHERE id = ${id}`;
+    await tx`UPDATE cases SET follow_up_date = (SELECT min(due_at) FROM follow_ups WHERE case_id = ${id} AND status = 'scheduled'), updated_at = now() WHERE id = ${id}`;
     // Baseline pocket depth recorded for the first time becomes a baseline measurement.
     if (input.pocketDepthMm != null && existing.pocket_depth_mm == null) {
       await tx`INSERT INTO case_measurements (case_id, kind, measured_at, tooth, pocket_depth_mm, recorded_by)
-               VALUES (${id}, 'baseline', ${existing.treatment_date ?? new Date()}, ${input.tooth ?? existing.tooth}, ${input.pocketDepthMm}, ${actor.userId})`;
+               VALUES (${id}, 'baseline', ${existing.treatment_date ? existing.treatment_date.toISOString().slice(0, 10) : await clinicToday(existing.clinic_id)}, ${input.tooth ?? existing.tooth}, ${input.pocketDepthMm}, ${actor.userId})`;
     }
     await audit(actor, { action: "case.update", entityType: "case", entityId: id, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId,
       inputSummary: Object.keys(set).join(", ") }, tx);
@@ -184,7 +195,7 @@ export async function closeCase(actor: Actor, id: string, outcomeNotes: string |
   const existing = await getCaseRow(actor, id);
   assertClinicWrite(actor, existing.clinic_id);
   await sql.begin(async (tx) => {
-    await tx`UPDATE cases SET status = 'closed', outcome_notes = coalesce(${outcomeNotes}, outcome_notes), updated_at = now() WHERE id = ${id}`;
+    await tx`UPDATE cases SET status = 'closed', outcome_notes = coalesce(${outcomeNotes}, outcome_notes), follow_up_date = NULL, updated_at = now() WHERE id = ${id}`;
     await tx`UPDATE follow_ups SET status = 'cancelled' WHERE case_id = ${id} AND status = 'scheduled'`;
     await audit(actor, { action: "case.close", entityType: "case", entityId: id, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId, inputSummary: outcomeNotes }, tx);
   });
@@ -263,6 +274,13 @@ export async function followUpsForClinic(actor: Actor) {
 
 export function linkConversation(caseId: string, conversationId: string) {
   return sql`INSERT INTO case_conversations (case_id, conversation_id) VALUES (${caseId}, ${conversationId}) ON CONFLICT DO NOTHING`;
+}
+
+/** Today's date (YYYY-MM-DD) in the clinic's timezone. */
+export async function clinicToday(clinicId: string | null): Promise<string> {
+  const [r] = await sql<{ d: string }[]>`
+    SELECT to_char(now() AT TIME ZONE coalesce((SELECT timezone FROM clinics WHERE id = ${clinicId}), 'UTC'), 'YYYY-MM-DD') AS d`;
+  return r.d;
 }
 
 export function isUuid(s: unknown): s is string {

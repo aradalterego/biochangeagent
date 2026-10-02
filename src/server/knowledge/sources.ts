@@ -203,6 +203,13 @@ export async function reparseSource(actor: Actor, id: string): Promise<void> {
   }
   const text = parsed ? serializePages(parsed) : null;
   if (parsed && !text && !error) error = "No readable text found in the document.";
+  if (!text) {
+    // A failed fetch/parse must not pull an approved source out of retrieval.
+    await sql`UPDATE knowledge_sources SET parse_error = ${error}, parse_status = CASE WHEN status = 'approved' THEN parse_status ELSE 'failed' END,
+              updated_at = now() WHERE id = ${id}`;
+    await audit(actor, { action: "knowledge_source.reparse", entityType: "knowledge_source", entityId: id, tool: "admin", result: "error", inputSummary: error });
+    return;
+  }
   // Changed content must be reviewed again before the agent may use it.
   await sql.begin(async (tx) => {
     await tx`

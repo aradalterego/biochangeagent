@@ -56,10 +56,11 @@ export async function inferAdoption(userId: string): Promise<{ state: AdoptionSt
 }
 
 export async function getAdoptionState(userId: string): Promise<{ state: AdoptionState; reason: string | null; last_transition_at: Date | null }> {
+  // Recomputed on read: dormancy is time-based and inputs are clinic-wide, so a stored row goes stale.
+  await recomputeAdoption(userId);
   const [row] = await sql<{ state: AdoptionState; reason: string | null; last_transition_at: Date }[]>`
     SELECT state, reason, last_transition_at FROM adoption_states WHERE user_id = ${userId}`;
-  if (row) return row;
-  return recomputeAdoption(userId);
+  return row;
 }
 
 /** Recomputes and stores the inferred state, recording a transition when it changes. */
@@ -90,4 +91,11 @@ export async function updateAdoptionState(actor: Actor, state: AdoptionState, re
       inputSummary: `${cur?.state ?? "none"} → ${state}: ${reason}` }, tx);
   });
   return { state, reason };
+}
+
+/** Clinic-level events (usage, orders) change the state of every vet in the clinic. */
+export async function recomputeClinicAdoption(clinicId: string | null) {
+  if (!clinicId) return;
+  const users = await sql<{ id: string }[]>`SELECT id FROM users WHERE clinic_id = ${clinicId} AND active`;
+  for (const u of users) await recomputeAdoption(u.id);
 }

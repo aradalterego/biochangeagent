@@ -27,6 +27,13 @@ Store dry at room temperature.`;
     expect(chunks.find((c) => c.section === "Storage")?.content).toBe("Store dry at room temperature.");
   });
 
+  it("does not treat upper-case warnings as section headings", () => {
+    const chunks = chunkDocument([{ page: 1, text: "# Procedure\n1. Place the scaffold.\n2. Close.\nDO NOT RESTERILIZE" }]);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].section).toBe("Procedure");
+    expect(chunks[0].content).toContain("DO NOT RESTERILIZE");
+  });
+
   it("round-trips page markers", () => {
     const s = serializePages({ title: null, pages: [{ page: 1, text: "a" }, { page: 2, text: "b" }] })!;
     expect(deserializePages(s)).toEqual([{ page: 1, text: "a" }, { page: 2, text: "b" }]);
@@ -45,6 +52,7 @@ describe("helpers", () => {
     expect(sniffKind(Buffer.from("%PDF-1.7 ..."))).toBe("pdf");
     expect(sniffKind(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe("jpeg");
     expect(sniffKind(Buffer.from([0x4d, 0x5a, 0x00, 0x00]))).toBeNull(); // executable
+    expect(sniffKind(Buffer.from("a".repeat(4095) + "– µm", "utf8"))).toBe("text"); // multibyte char across the 4 KB boundary
   });
 
   it("builds injection-safe OR queries", () => {

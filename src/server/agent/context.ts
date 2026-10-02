@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import { safeTimeZone } from "@/lib/format";
 import { isClinicRole } from "@/lib/roles";
 import { getUserProfile } from "@/server/domain/profile";
 import { getMemories } from "@/server/domain/memory";
@@ -108,8 +109,8 @@ export async function buildContext(state: TurnState): Promise<{ contextBlock: st
     : [{ due_week: 0, overdue: 0 }];
 
   const context = {
-    now: new Date().toLocaleString("en-GB", { timeZone: profile.timezone || "UTC", dateStyle: "full", timeStyle: "short" }),
-    today: new Date().toLocaleDateString("en-CA", { timeZone: profile.timezone || "UTC" }),
+    now: new Date().toLocaleString("en-GB", { timeZone: safeTimeZone(profile.timezone), dateStyle: "full", timeStyle: "short" }),
+    today: new Date().toLocaleDateString("en-CA", { timeZone: safeTimeZone(profile.timezone) }),
     channel: "web",
     user: {
       name: profile.name,

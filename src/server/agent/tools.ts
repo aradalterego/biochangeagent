@@ -8,7 +8,7 @@ import { getSource } from "@/server/knowledge/sources";
 import { getApprovedClaims } from "@/server/knowledge/claims";
 import { getUserProfile, updateUserProfile, getClinic, getClinicSummary } from "@/server/domain/profile";
 import {
-  CASE_STATUSES, addCaseNote, closeCase, completeFollowUp, createCase, getCase, isUuid, linkConversation, scheduleFollowUp,
+  CASE_STATUSES, addCaseNote, clinicToday, closeCase, completeFollowUp, createCase, getCase, isUuid, linkConversation, scheduleFollowUp,
   searchCases, updateCase, type CaseInput,
 } from "@/server/domain/cases";
 import { estimateInventory, getInventory, recordProductUsage, setInventoryConfirmed } from "@/server/domain/inventory";
@@ -187,10 +187,6 @@ export const TOOLS: ToolDef[] = [
         limit: 5,
       });
       state.knowledgeSearches.push({ query: a.query, product: a.product ?? null, results: hits.length });
-      if (!hits.length && !state.gapLogged) {
-        state.gapLogged = true;
-        await logKnowledgeGap({ question: state.userText, product: a.product, sourcesSearched: [{ query: a.query }], reason: "No approved passage matched", userId: state.actor.userId, conversationId: state.conversationId });
-      }
       return { passages: registerHits(state, hits), note: hits.length ? undefined : "No approved BioChange source matched this query." };
     },
   },
@@ -214,8 +210,9 @@ export const TOOLS: ToolDef[] = [
     description: "Approved product claims with allowed context and restricted wording. Prefer this wording when making product claims.",
     parameters: obj({ product: nullable(enumOf(["ReGum Vet", "MicroFoam"])), claim_type: nstr() }),
     mutating: false,
-    async run(a) {
-      return { claims: await getApprovedClaims({ product: a.product, claimType: a.claim_type }) };
+    async run(a, state) {
+      const [u] = await sql<{ country: string | null }[]>`SELECT country FROM users WHERE id = ${state.actor.userId}`;
+      return { claims: await getApprovedClaims({ product: a.product, claimType: a.claim_type, market: u?.country ?? null }) };
     },
   },
   {
@@ -224,6 +221,7 @@ export const TOOLS: ToolDef[] = [
     parameters: obj({ question: str("The user's question, self-contained."), product: nstr(), reason: str() }),
     mutating: true,
     async run(a, state) {
+      if (state.gapLogged) return { ok: true, note: "Already logged for this turn." };
       const id = await logKnowledgeGap({ question: a.question, product: a.product, sourcesSearched: state.knowledgeSearches, reason: a.reason, userId: state.actor.userId, conversationId: state.conversationId });
       state.gapLogged = true;
       return { ok: true, gap_id: id };
@@ -394,7 +392,7 @@ export const TOOLS: ToolDef[] = [
         await getCase(state.actor, caseId);
         const [f] = await sql<{ id: string }[]>`SELECT id FROM follow_ups WHERE case_id = ${caseId} AND status = 'scheduled' ORDER BY due_at LIMIT 1`;
         if (!f) {
-          const created = await scheduleFollowUp(state.actor, caseId, new Date().toISOString().slice(0, 10), "Follow-up recorded", ctxOf(state, "complete_case_followup"));
+          const created = await scheduleFollowUp(state.actor, caseId, await clinicToday(state.actor.clinicId), "Follow-up recorded", ctxOf(state, "complete_case_followup"));
           fid = created.id;
         } else fid = f.id;
       }
@@ -597,7 +595,7 @@ function caseBrief(c: {
   return {
     id: c.id, status: c.status, patient_ref: c.internal_patient_identifier, species: c.species, tooth: c.tooth, condition: c.condition_summary,
     pocket_depth_mm: c.pocket_depth_mm, defect_type: c.defect_type, furcation: c.furcation, procedure: c.procedure_type, goal: c.treatment_goal,
-    product: c.product_name, variant: c.product_variant, treatment_date: dateOnly(c.treatment_date), next_follow_up: dateOnly(c.next_follow_up ?? c.follow_up_date),
+    product: c.product_name, variant: c.product_variant, treatment_date: dateOnly(c.treatment_date), next_follow_up: dateOnly(c.next_follow_up),
     baseline_notes: c.baseline_notes, outcome: c.outcome_notes, updated: dateOnly(c.updated_at),
   };
 }

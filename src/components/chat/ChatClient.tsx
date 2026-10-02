@@ -48,7 +48,7 @@ export function ChatClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content, conversationId, caseId: conversationId ? null : caseId ?? null }),
       });
-      const body = await res.json();
+      const body = await res.json().catch(() => ({ error: res.status === 504 ? "The request took too long. Please check the conversation before resending." : "Unexpected server response." }));
       if (!res.ok) throw new Error(body.error ?? "Request failed");
       const msg = body.message;
       setMessages((m) => [

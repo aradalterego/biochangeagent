@@ -26,7 +26,8 @@ export default async function SourceReviewPage({ params }: { params: Promise<{ i
     throw e;
   }
   const others = await sql<{ id: string; title: string }[]>`
-    SELECT id, title FROM knowledge_sources WHERE id <> ${id} AND source_type = ${s.source_type} AND status IN ('approved', 'pending_review') ORDER BY title`;
+    SELECT id, title FROM knowledge_sources WHERE id <> ${id} AND source_type = ${s.source_type}
+      AND (status IN ('approved', 'pending_review') OR id = ${s.supersedes_source_id ?? null}) ORDER BY title`;
   const supersededBy = await sql<{ id: string; title: string; status: string }[]>`SELECT id, title, status FROM knowledge_sources WHERE supersedes_source_id = ${id}`;
   const study = s.study as Record<string, string | number | string[] | null> | null;
   const canApprove = !s.is_placeholder && Boolean(s.extracted_text?.trim()) && s.status !== "approved";

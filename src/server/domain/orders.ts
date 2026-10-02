@@ -3,8 +3,8 @@ import { sql } from "@/lib/db";
 import { audit, type OpContext } from "@/lib/audit";
 import { assertClinicWrite, NotFoundError, requireClinic, ValidationError, type Actor } from "@/lib/authz";
 import { resolveProduct } from "./products";
-import { recomputeAdoption } from "./adoption";
-import { isUuid } from "./cases";
+import { recomputeClinicAdoption } from "./adoption";
+import { clinicToday, isUuid } from "./cases";
 
 export const ORDER_STATUSES = ["draft", "submitted", "confirmed", "shipped", "received", "cancelled"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -28,7 +28,7 @@ export interface OrderRow {
   updated_at: Date;
 }
 
-const ORDER_SELECT = sql`
+const ORDER_SELECT = () => sql`
   SELECT o.*, p.name AS product_name, p.sku, p.units_per_package, u.name AS created_by_name,
          coalesce(o.distributor, d.name) AS distributor
   FROM orders o JOIN products p ON p.id = o.product_id
@@ -37,13 +37,13 @@ const ORDER_SELECT = sql`
 
 export async function getOrderHistory(actor: Actor, limit = 50): Promise<OrderRow[]> {
   const clinicId = requireClinic(actor);
-  return sql<OrderRow[]>`${ORDER_SELECT} WHERE o.clinic_id = ${clinicId} ORDER BY o.created_at DESC LIMIT ${Math.min(limit, 200)}`;
+  return sql<OrderRow[]>`${ORDER_SELECT()} WHERE o.clinic_id = ${clinicId} ORDER BY o.created_at DESC LIMIT ${Math.min(limit, 200)}`;
 }
 
 export async function getOrder(actor: Actor, id: string): Promise<OrderRow> {
   if (!isUuid(id)) throw new NotFoundError("Order not found");
   const clinicId = requireClinic(actor);
-  const [o] = await sql<OrderRow[]>`${ORDER_SELECT} WHERE o.id = ${id} AND o.clinic_id = ${clinicId}`;
+  const [o] = await sql<OrderRow[]>`${ORDER_SELECT()} WHERE o.id = ${id} AND o.clinic_id = ${clinicId}`;
   if (!o) throw new NotFoundError("Order not found");
   return o;
 }
@@ -83,11 +83,11 @@ export async function confirmOrder(actor: Actor, id: string, ctx: OpContext = {}
   assertClinicWrite(actor, o.clinic_id);
   if (o.status !== "draft") throw new ValidationError(`Order is already ${o.status}.`);
   await sql.begin(async (tx) => {
-    await tx`UPDATE orders SET status = 'submitted', order_date = current_date, confirmed_by = ${actor.userId}, updated_at = now() WHERE id = ${id} AND status = 'draft'`;
+    await tx`UPDATE orders SET status = 'submitted', order_date = ${await clinicToday(o.clinic_id)}::date, confirmed_by = ${actor.userId}, updated_at = now() WHERE id = ${id} AND status = 'draft'`;
     await audit(actor, { action: "order.confirm_record", entityType: "order", entityId: id, tool: ctx.tool ?? "ui", sourceMessageId: ctx.sourceMessageId,
       inputSummary: `${o.quantity} package(s) of ${o.product_name}` }, tx);
   });
-  await recomputeAdoption(actor.userId);
+  await recomputeClinicAdoption(actor.clinicId);
   return getOrder(actor, id);
 }
 
@@ -113,7 +113,8 @@ export async function updateOrderStatus(actor: Actor, id: string, status: OrderS
     );
   }
   await sql.begin(async (tx) => {
-    await tx`UPDATE orders SET status = ${status}, updated_at = now() WHERE id = ${id}`;
+    const updated = await tx`UPDATE orders SET status = ${status}, updated_at = now() WHERE id = ${id} AND status = ${o.status}`;
+    if (updated.count !== 1) throw new ValidationError("The order was changed by someone else. Reload and try again.");
     if (status === "received") {
       const units = o.quantity * o.units_per_package;
       const [inv] = await tx<{ quantity_estimated: number }[]>`
@@ -127,6 +128,6 @@ export async function updateOrderStatus(actor: Actor, id: string, status: OrderS
     await audit(actor, { action: "order.update_status", entityType: "order", entityId: id, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId,
       inputSummary: `${o.status} → ${status}` }, tx);
   });
-  await recomputeAdoption(actor.userId);
+  await recomputeClinicAdoption(actor.clinicId);
   return getOrder(actor, id);
 }

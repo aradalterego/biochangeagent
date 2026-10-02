@@ -79,7 +79,7 @@ function toBlocks(pages: ParsedPage[]): Block[] {
       };
       for (const line of lines) {
         const h = HEADING.exec(line);
-        if (h || (PLAIN_HEADING.test(line) && line.split(" ").length <= 8 && !STEP.test(line))) {
+        if (h || (PLAIN_HEADING.test(line) && line.split(" ").length <= 8 && !STEP.test(line) && !QUALIFIER.test(line))) {
           push();
           section = (h ? h[2] : line).trim().slice(0, 160);
           continue;

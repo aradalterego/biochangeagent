@@ -38,7 +38,8 @@ export async function createMedicalSupportRequest(actor: Actor, input: Escalatio
 }
 
 export async function listMyRequests(actor: Actor) {
-  return sql`SELECT id, question, status, answer, answered_at, answer_seen_at, created_at FROM medical_support_requests
+  return sql`SELECT id, question, status, CASE WHEN status IN ('answered', 'closed') THEN answer END AS answer, answered_at, answer_seen_at, created_at
+             FROM medical_support_requests
              WHERE user_id = ${actor.userId} ORDER BY created_at DESC LIMIT 50`;
 }
 

@@ -6,6 +6,7 @@ import { openai } from "@/server/ai/openai";
 import { buildContext } from "./context";
 import { runAgent, type LLMClient } from "./loop";
 import { isUuid } from "@/server/domain/cases";
+import { logKnowledgeGap } from "@/server/domain/gaps";
 import { newTurnState, type Citation, type PendingAction } from "./tools";
 
 export type Channel = "web" | "whatsapp" | "messenger" | "apple_messages" | "rcs";
@@ -87,8 +88,16 @@ export async function processMessage(input: ProcessMessageInput, deps: { client?
     error = true;
   }
 
+  // Searched approved knowledge and found nothing at all → a knowledge gap (once per turn).
+  if (!error && !state.gapLogged && state.knowledgeSearches.length > 1 && state.knowledgeSearches.every((s) => s.results === 0)) {
+    state.gapLogged = true;
+    await logKnowledgeGap({ question: content, sourcesSearched: state.knowledgeSearches, reason: "No approved passage matched any search", userId: actor.userId, conversationId: conversation.id })
+      .catch((e) => console.error("[agent] gap logging failed", e));
+  }
+
   // Only sources the answer actually cites are shown under it.
-  const cited = error ? [] : [...state.citations.values()].filter((c) => new RegExp(`\\[${c.label}\\]`).test(text));
+  const citedLabels = new Set([...text.matchAll(/\[(S\d+(?:\s*,\s*S\d+)*)\]/g)].flatMap((m) => m[1].split(/\s*,\s*/)));
+  const cited = error ? [] : [...state.citations.values()].filter((c) => citedLabels.has(c.label));
   const pendingActions = error ? [] : state.pendingActions;
 
   // 4. Persist the assistant message with its metadata.

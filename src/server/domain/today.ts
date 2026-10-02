@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import { safeTimeZone } from "@/lib/format";
 import { isClinicRole } from "@/lib/roles";
 import type { Actor } from "@/lib/authz";
 import { followUpsForClinic } from "./cases";
@@ -20,7 +21,7 @@ export interface TodayCard {
  */
 export async function getTodayCards(actor: Actor, timezone = "UTC"): Promise<TodayCard[]> {
   const cards: TodayCard[] = [];
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: safeTimeZone(timezone) });
 
   if (isClinicRole(actor.role) && actor.clinicId) {
     const fus = await followUpsForClinic(actor);

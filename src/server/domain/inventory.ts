@@ -3,8 +3,8 @@ import { sql } from "@/lib/db";
 import { audit, type OpContext } from "@/lib/audit";
 import { assertClinicWrite, requireClinic, ValidationError, type Actor } from "@/lib/authz";
 import { resolveProduct } from "./products";
-import { getCaseRow } from "./cases";
-import { recomputeAdoption } from "./adoption";
+import { clinicToday, getCaseRow } from "./cases";
+import { recomputeClinicAdoption } from "./adoption";
 
 export interface InventoryLine {
   productId: string;
@@ -108,15 +108,17 @@ export async function recordProductUsage(
   const estimatedAfter = await sql.begin(async (tx) => {
     const [inv] = await tx<{ quantity_estimated: number | null }[]>`
       INSERT INTO inventory (clinic_id, product_id, quantity_estimated)
-      VALUES (${clinicId}, ${product.id}, ${-input.quantity})
+      VALUES (${clinicId}, ${product.id}, NULL)
       ON CONFLICT (clinic_id, product_id) DO UPDATE
-        SET quantity_estimated = coalesce(inventory.quantity_estimated, inventory.quantity_confirmed, 0) - ${input.quantity}, updated_at = now()
+        SET quantity_estimated = CASE WHEN coalesce(inventory.quantity_estimated, inventory.quantity_confirmed) IS NULL THEN NULL
+          -- GREATEST ignores NULLs, so the unknown case is handled explicitly above.
+          ELSE greatest(coalesce(inventory.quantity_estimated, inventory.quantity_confirmed) - ${input.quantity}, 0) END, updated_at = now()
       RETURNING quantity_estimated`;
     await tx`INSERT INTO inventory_events (clinic_id, product_id, event_type, quantity, estimated_after, case_id, note, created_by)
              VALUES (${clinicId}, ${product.id}, 'usage', ${input.quantity}, ${inv.quantity_estimated}, ${input.caseId ?? null}, ${input.note ?? null}, ${actor.userId})`;
     if (input.caseId) {
       await tx`UPDATE cases SET product_id = coalesce(product_id, ${product.id}), product_variant = coalesce(product_variant, ${product.variant}),
-               treatment_date = coalesce(treatment_date, current_date),
+               treatment_date = coalesce(treatment_date, ${await clinicToday(clinicId)}::date),
                status = CASE WHEN status IN ('discussion', 'planned') THEN 'treated' ELSE status END, updated_at = now()
                WHERE id = ${input.caseId}`;
     }
@@ -124,7 +126,7 @@ export async function recordProductUsage(
       inputSummary: `${input.quantity} × ${product.name}${input.caseId ? ` on case ${input.caseId}` : ""}` }, tx);
     return inv.quantity_estimated;
   });
-  await recomputeAdoption(actor.userId);
+  await recomputeClinicAdoption(actor.clinicId);
   const line = (await getInventory(actor, product.id))[0];
   return { product: product.name, quantityUsed: input.quantity, estimatedStock: estimatedAfter, inventory: line };
 }

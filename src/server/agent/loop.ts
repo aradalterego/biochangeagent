@@ -13,6 +13,8 @@ export interface LLMClient {
 type InputItem = OpenAI.Responses.ResponseInputItem;
 
 const MAX_TOOL_ROUNDS = 8;
+/** Whole-turn budget, below the route's maxDuration so the user always gets a response. */
+const TURN_DEADLINE_MS = 100_000;
 
 export interface AgentRunResult {
   text: string;
@@ -41,14 +43,20 @@ export async function runAgent(client: LLMClient, state: TurnState, ctx: { conte
     { role: "developer", content: ctx.contextBlock },
     ...ctx.history.map((m) =>
       // App events (e.g. "Order recorded") are passed as developer notes, not as user speech.
-      (m.role === "system" ? { role: "developer", content: `[app event] ${m.content}` } : { role: m.role, content: m.content }) as InputItem,
+      (m.role === "system"
+        ? { role: "developer", content: `[app event] ${m.content}` }
+        : // Citation labels are numbered per turn; drop old ones so they can't be confused with this turn's.
+          { role: m.role, content: m.role === "assistant" ? m.content.replace(/\s*\[S\d+(?:\s*,\s*S\d+)*\]/g, "") : m.content }) as InputItem,
     ),
     { role: "user", content: state.userText },
   ];
   const tools = toolDeclarations();
 
+  const deadline = Date.now() + TURN_DEADLINE_MS;
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const finalRound = round === MAX_TOOL_ROUNDS;
+    const remaining = deadline - Date.now();
+    if (remaining < 5_000) throw new Error("Agent turn exceeded its time budget");
     const res = await client.responses.create({
       model,
       instructions: buildInstructions(),
@@ -59,7 +67,7 @@ export async function runAgent(client: LLMClient, state: TurnState, ctx: { conte
       store: false,
       ...(reasoning ? { include: ["reasoning.encrypted_content"] as OpenAI.Responses.ResponseIncludable[] } : {}),
       ...(reasoning && effort ? { reasoning: { effort } } : {}),
-    });
+    }, { timeout: remaining, maxRetries: remaining > 60_000 ? 1 : 0 });
 
     if (res.error) throw new Error(`Model error: ${res.error.message}`);
     const calls = res.output.filter((o): o is OpenAI.Responses.ResponseFunctionToolCall => o.type === "function_call");

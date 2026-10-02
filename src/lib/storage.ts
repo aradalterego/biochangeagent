@@ -31,7 +31,15 @@ export function sniffKind(buf: Buffer): FileKind | null {
   if (buf.length > 132 && buf.subarray(128, 132).toString("latin1") === "DICM") return "dicom";
   // Plain UTF-8 text without NUL bytes (used for .txt / .md knowledge uploads).
   const head = buf.subarray(0, Math.min(buf.length, 4096));
-  if (!head.includes(0) && Buffer.from(head.toString("utf8"), "utf8").equals(head)) return "text";
+  if (!head.includes(0)) {
+    try {
+      // stream:true tolerates a multibyte character cut at the 4 KB boundary.
+      new TextDecoder("utf-8", { fatal: true }).decode(head, { stream: buf.length > head.length });
+      return "text";
+    } catch {
+      return null;
+    }
+  }
   return null;
 }
 

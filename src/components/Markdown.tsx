@@ -49,7 +49,7 @@ export function Markdown({ text, renderCitation }: { text: string; renderCitatio
 
 function renderInline(s: string, renderCitation?: (label: string) => ReactNode): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|\*[^*\s][^*]*\*|`[^`]+`|\[S\d+\](?:\s*\[S\d+\])*)/g;
+  const re = /(\*\*[^*]+\*\*|\*[^*\s][^*]*\*|`[^`]+`|\[S\d+(?:\s*,\s*S\d+)*\](?:\s*\[S\d+(?:\s*,\s*S\d+)*\])*)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let k = 0;

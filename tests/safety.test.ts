@@ -128,6 +128,39 @@ describe("authorisation", () => {
   });
 });
 
+describe("review fixes", () => {
+  it("keeps estimated stock unknown (not negative) without a baseline", async () => {
+    const { recordProductUsage, getInventory } = await import("@/server/domain/inventory");
+    const vet = await actorFor("vet@demo.biochange.test");
+    await recordProductUsage(vet, { productRef: "MicroFoam", quantity: 1 });
+    expect((await getInventory(vet, "MicroFoam"))[0].quantityEstimated).toBeNull();
+  });
+
+  it("turns a case follow-up date into a scheduled follow-up and clears it on close", async () => {
+    const { updateCase, closeCase } = await import("@/server/domain/cases");
+    const vet = await actorFor("vet@demo.biochange.test");
+    const c = await createCase(vet, { tooth: "309" });
+    await updateCase(vet, c.id, { followUpDate: "2030-01-15", status: null, species: null });
+    let full = await getCase(vet, c.id);
+    expect(full.followUps.map((f) => f.status)).toEqual(["scheduled"]);
+    expect(full.case.species).toBe("dog");
+    await closeCase(vet, c.id, null);
+    full = await getCase(vet, c.id);
+    expect(full.case.follow_up_date).toBeNull();
+  });
+
+  it("does not show a Medical Support draft answer to the vet", async () => {
+    const { createMedicalSupportRequest, setEscalationStatus, listMyRequests } = await import("@/server/domain/escalations");
+    const vet = await actorFor("vet@demo.biochange.test");
+    const medical = await actorFor("medical@demo.biochange.test");
+    const r = await createMedicalSupportRequest(vet, { question: "Draft visibility test?" });
+    await setEscalationStatus(medical, r.id, "in_review", "draft text");
+    expect((await listMyRequests(vet)).find((x) => x.id === r.id)?.answer).toBeNull();
+    await setEscalationStatus(medical, r.id, "answered", "final text");
+    expect((await listMyRequests(vet)).find((x) => x.id === r.id)?.answer).toBe("final text");
+  });
+});
+
 describe("hardening", () => {
   it("cannot bypass the login lockout with parallel guesses", async () => {
     const { attemptLogin } = await import("@/lib/auth/login");
