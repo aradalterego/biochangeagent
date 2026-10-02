@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #16232e;
+  --color-muted: #5b6b78;
+  --color-line: #dfe5ea;
+  --color-panel: #ffffff;
+  --color-canvas: #f4f6f8;
+  --color-brand: #0f6e6e;
+  --color-brand-dark: #0b5555;
+  --color-brand-soft: #e3f1f0;
+  --color-warn: #a15c07;
+  --color-warn-soft: #fdf3e2;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+  --color-ok: #1d7a46;
+  --color-ok-soft: #e6f4ec;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html, body { background: var(--color-canvas); color: var(--color-ink); }
+body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+
+@utility card { @apply rounded-xl border border-line bg-panel; }
+@utility btn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50; }
+@utility btn-primary { @apply btn bg-brand text-white hover:bg-brand-dark; }
+@utility btn-secondary { @apply btn border border-line bg-white text-ink hover:bg-canvas; }
+@utility btn-danger { @apply btn border border-danger/30 bg-white text-danger hover:bg-danger-soft; }
+@utility input { @apply w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15; }
+@utility label { @apply mb-1 block text-xs font-medium text-muted; }
+@utility badge { @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium; }
+@utility h1 { @apply text-xl font-semibold tracking-tight; }
+@utility h2 { @apply text-base font-semibold; }
+@utility table {
+  @apply w-full text-left text-sm;
+  & th { @apply border-b border-line px-3 py-2 text-xs font-medium tracking-wide text-muted uppercase; }
+  & td { @apply border-b border-line px-3 py-2.5 align-top; }
+}
+
+.prose-chat p { margin: 0.4rem 0; }
+.prose-chat ol { list-style: decimal; padding-left: 1.3rem; margin: 0.4rem 0; }
+.prose-chat ul { list-style: disc; padding-left: 1.3rem; margin: 0.4rem 0; }
+.prose-chat li { margin: 0.15rem 0; }
+.prose-chat strong { font-weight: 600; }
+.prose-chat h3, .prose-chat h4 { font-weight: 600; margin-top: 0.7rem; }
+.prose-chat code { background: var(--color-canvas); padding: 0 0.25rem; border-radius: 4px; font-size: 0.85em; }
