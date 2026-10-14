@@ -658,4 +658,70 @@ flowchart LR
 
 **עד לקבלת אישור מפורש לא יבוצע שום שינוי בקוד, בסכמה או בתשתית.**
 
+---
+
+## 16. סטטוס מימוש (סבב 1)
+
+**החלטות שהתקבלו:**
+
+| שאלה | החלטה | השפעה |
+|---|---|---|
+| Q1 | הסוכן לווטרינרים מחוברים בלבד | אין סוכן אנונימי |
+| Q2 | Cases משותפים בתוך מרפאה | S-01 נסגר כהחלטה, אין owner scope |
+| Q5 | אנגלית בעיקר | — |
+| Q6 | לאפשר את כל הפורמטים | PDF, CSV, XLSX (ללא מאקרו), TXT, תמונות, DICOM |
+
+WordPress (Q4) יטופל בנפרד.
+
+| סעיף | מה מומש | איפה |
+|---|---|---|
+| 2. אבטחה | S-04: תוכן לא-אמין עבר לבלוק `<reference_data>` מחוץ ל-developer | `src/server/agent/context.ts`, `loop.ts` |
+| | S-07: logger מובנה עם redaction | `src/lib/log.ts` |
+| | S-08: audit ללא ערכים קליניים | `src/server/domain/*` |
+| | S-10: rate limiting להעלאות, קישורי כניסה, MFA ו-export | `src/lib/rateLimit.ts` |
+| | S-11: CSP עם nonce | `src/proxy.ts` |
+| | S-12: `APP_ENV` + בדיקות startup | `src/lib/env.ts` |
+| | S-13: סגירת Case מהצ'אט באישור | `close_case`, `closeCaseFromChat` |
+| | S-14: נרמול Unicode | `escalations.ts`, `memory.ts` |
+| | S-19: בדיקת origin מול `APP_URL` | `src/lib/http.ts` |
+| | S-20: שמות קבצים לא נשלחים למודל | `tools.ts` |
+| | `/api/health` | `src/app/api/health/route.ts` |
+| | Feature flags (ניתוק מלאי, הזמנות, adoption והדרכה) | `src/lib/features.ts` |
+| 4. התחברות | Magic link + Google דרך Supabase Auth, invite-only | `src/lib/auth/identity.ts`, `signin.ts` |
+| | ספק `dev` מקומי | — |
+| | Session עם idle timeout ו-"logout everywhere" | `session.ts` |
+| | TOTP MFA לצוות, מוצפן at rest | `totp.ts`, `crypto.ts`, `/login/mfa` |
+| | Invite flow ואיפוס MFA | `/admin/accounts` |
+| | audit ל-login failure | — |
+| 5. ניהול ידע | `index_status` ו-`index_error` גלויים | `sources.ts`, דפי `/admin/knowledge` |
+| | Re-index ו-Delete אמיתי (passages + רשומה + קובץ) | — |
+| | "Used by agent" | — |
+| | Agent policy מנוהל וממוסגר | `agentPolicy.ts`, `/admin/agent-policy` |
+| 7. איסוף דאטה | `case_feedback` מובנה (UI + כלי סוכן) | `feedback.ts`, `record_case_feedback` |
+| | Treatment files | — |
+| | re-encode לתמונות (הסרת EXIF) | `storage.ts` |
+| | מחיקת קבצים (soft delete + מחיקה מה-storage) | — |
+| | הורדה כ-attachment | — |
+| 8. Dashboard | סקירה, רשימת Cases חוצת-מרפאות עם חיפוש, סינון, מיון ועימוד | `dashboard.ts`, `/dashboard/**` |
+| | אינדיקציה ל-follow-up חסר או באיחור | — |
+| | Case detail read-only | — |
+| | רשימת וטרינרים | — |
+| | Export CSV (ללא patient reference, מוגן מ-formula injection, audit) | — |
+
+**Migration:** `db/migrations/0004_mvp_security_auth_capture.sql`, expand-only (ללא DROP של נתונים).
+
+**בדיקות:**
+- 56 טסטים עוברים: 31 קיימים ו-25 חדשים ב-`tests/mvp.test.ts`.
+- `tsc` ו-`next build` נקיים.
+- E2E בדפדפן עבר: magic link, קישור חד-פעמי, חסימת ניתוב, feedback, העלאה ומחיקה, MFA, Dashboard, export ו-agent policy.
+
+**לא נבדק מול שירות אמיתי (דורש חשבונות):**
+- זרימת Supabase Auth (magic link token_hash ו-Google PKCE) נכתבה לפי ה-API המתועד ונבדקה רק דרך ספק ה-dev.
+- שליחת מייל דרך Resend.
+- ה-prompt injection נבדק מבנית (מה נשלח למודל). Eval מול מודל אמיתי עדיין חסר.
+
+**פתוח לסבבים הבאים:**
+- תכנית העבודה מסעיף 12: שלב 3 (data model, כולל `app_settings`), שלב 6 (סוכן באתר), שלב 9 (מעקבים ותזכורות) ושלב 10 (WordPress).
+- Least-privilege DB role (M15), malware scanning (F17), CI (F15), retention policies (F18).
+
 </div>

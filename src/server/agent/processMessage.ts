@@ -8,6 +8,9 @@ import { runAgent, type LLMClient } from "./loop";
 import { isUuid } from "@/server/domain/cases";
 import { logKnowledgeGap } from "@/server/domain/gaps";
 import { newTurnState, type Citation, type PendingAction } from "./tools";
+import { buildInstructions } from "./systemPrompt";
+import { getActivePolicy, renderPolicy } from "@/server/domain/agentPolicy";
+import { log } from "@/lib/log";
 
 export type Channel = "web" | "whatsapp" | "messenger" | "apple_messages" | "rcs";
 
@@ -77,13 +80,13 @@ export async function processMessage(input: ProcessMessageInput, deps: { client?
       text = FALLBACK_NOT_CONFIGURED;
       error = true;
     } else {
-      const ctx = await buildContext(state);
-      const result = await runAgent(deps.client ?? openai(), state, ctx);
+      const [ctx, policy] = await Promise.all([buildContext(state), getActivePolicy()]);
+      const result = await runAgent(deps.client ?? openai(), state, ctx, buildInstructions(renderPolicy(policy)));
       text = result.text;
       model = result.model;
     }
   } catch (err) {
-    console.error("[agent] turn failed", err);
+    log.error("agent.turn_failed", { err });
     text = FALLBACK_ERROR;
     error = true;
   }
@@ -92,7 +95,7 @@ export async function processMessage(input: ProcessMessageInput, deps: { client?
   if (!error && !state.gapLogged && state.knowledgeSearches.length > 1 && state.knowledgeSearches.every((s) => s.results === 0)) {
     state.gapLogged = true;
     await logKnowledgeGap({ question: content, sourcesSearched: state.knowledgeSearches, reason: "No approved passage matched any search", userId: actor.userId, conversationId: conversation.id })
-      .catch((e) => console.error("[agent] gap logging failed", e));
+      .catch((err) => log.error("agent.gap_logging_failed", { err }));
   }
 
   // Only sources the answer actually cites are shown under it.
@@ -124,7 +127,7 @@ export async function processMessage(input: ProcessMessageInput, deps: { client?
       await runExtraction({ actor, conversationId: conversation.id, userMessageId: userMsg.id, assistantMessageId: assistant.id, userText: content, assistantText: text, state });
     };
     if (deps.runExtraction) deps.runExtraction(job);
-    else void job().catch((e) => console.error("[agent] extraction failed", e));
+    else void job().catch((err) => log.error("agent.extraction_failed", { err }));
   }
 
   return {

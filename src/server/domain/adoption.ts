@@ -88,7 +88,7 @@ export async function updateAdoptionState(actor: Actor, state: AdoptionState, re
              ON CONFLICT (user_id) DO UPDATE SET state = EXCLUDED.state, reason = EXCLUDED.reason, last_transition_at = now()`;
     await tx`INSERT INTO adoption_transitions (user_id, from_state, to_state, reason) VALUES (${actor.userId}, ${cur?.state ?? null}, ${state}, ${reason})`;
     await audit(actor, { action: "adoption.update", entityType: "adoption_state", entityId: actor.userId, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId,
-      inputSummary: `${cur?.state ?? "none"} → ${state}: ${reason}` }, tx);
+      inputSummary: `${cur?.state ?? "none"} → ${state}` }, tx);
   });
   return { state, reason };
 }

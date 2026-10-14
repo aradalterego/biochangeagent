@@ -35,10 +35,11 @@ export async function saveMemory(
   const content = input.content?.trim();
   if (!content || content.length > 500) throw new ValidationError("Memory must be 1–500 characters.");
   const confidence = Math.min(1, Math.max(0, input.confidence ?? 0.8));
-  const norm = content.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // Near-duplicate detection on letters and digits only (any script).
+  const norm = content.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   const [existing] = await sql<{ id: string }[]>`
     SELECT id FROM memories WHERE user_id = ${actor.userId} AND active AND memory_type = ${input.memoryType}
-      AND trim(regexp_replace(lower(content), '[^a-z0-9]+', ' ', 'g')) = ${norm}`;
+      AND trim(regexp_replace(lower(content), '[^[:alnum:]]+', ' ', 'g')) = ${norm}`;
   return sql.begin(async (tx) => {
     let id: string;
     if (existing) {
@@ -52,7 +53,7 @@ export async function saveMemory(
       id = row.id;
     }
     await audit(actor, { action: existing ? "memory.refresh" : "memory.create", entityType: "memory", entityId: id, tool: ctx.tool,
-      sourceMessageId: ctx.sourceMessageId, inputSummary: content }, tx);
+      sourceMessageId: ctx.sourceMessageId, inputSummary: input.memoryType }, tx);
     return { id, updated: Boolean(existing) };
   });
 }

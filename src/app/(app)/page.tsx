@@ -10,6 +10,7 @@ import { getAdoptionState } from "@/server/domain/adoption";
 import { missingCriticalDocuments } from "@/server/knowledge/sources";
 import { Badge, Empty, Page, PageHeader, Section, statusTone } from "@/components/ui";
 import { fmtDate } from "@/lib/format";
+import { featureEnabled } from "@/lib/features";
 
 const CARD_TONE: Record<TodayCard["kind"], string> = {
   follow_up_overdue: "border-l-danger",
@@ -62,12 +63,16 @@ function summarize(cards: TodayCard[]): string {
 }
 
 async function ClinicOverview({ actor, userId }: { actor: ReturnType<typeof actorFromSession>; userId: string }) {
+  const inventoryOn = featureEnabled("inventory");
+  const adoptionOn = featureEnabled("adoption");
   const [cases, forecasts, adoption] = await Promise.all([
     searchCases(actor, { limit: 6 }).then((r) => r.filter((c) => c.status !== "closed")),
-    estimateInventory(actor),
-    getAdoptionState(userId),
+    inventoryOn ? estimateInventory(actor) : Promise.resolve([]),
+    adoptionOn ? getAdoptionState(userId) : Promise.resolve(null),
   ]);
-  const [pendingOrder] = await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM orders WHERE clinic_id = ${actor.clinicId} AND status IN ('draft', 'submitted', 'confirmed', 'shipped')`;
+  const [pendingOrder] = featureEnabled("orders")
+    ? await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM orders WHERE clinic_id = ${actor.clinicId} AND status IN ('draft', 'submitted', 'confirmed', 'shipped')`
+    : [{ n: 0 }];
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <Section title="Active cases" actions={<Link href="/cases" className="text-sm text-brand hover:underline">All cases</Link>}>
@@ -93,7 +98,7 @@ async function ClinicOverview({ actor, userId }: { actor: ReturnType<typeof acto
           <p className="text-sm text-muted">No active cases. Save a case from the chat or <Link className="text-brand" href="/cases/new">add one</Link>.</p>
         )}
       </Section>
-      <Section title="Inventory status" actions={<Link href="/inventory" className="text-sm text-brand hover:underline">Inventory</Link>}>
+      {inventoryOn && <Section title="Inventory status" actions={<Link href="/inventory" className="text-sm text-brand hover:underline">Inventory</Link>}>
         {forecasts.length ? (
           <ul className="space-y-2 text-sm">
             {forecasts.map((f) => (
@@ -110,8 +115,8 @@ async function ClinicOverview({ actor, userId }: { actor: ReturnType<typeof acto
           <p className="text-sm text-muted">No inventory recorded yet.</p>
         )}
         <p className="mt-3 text-xs text-muted">{pendingOrder.n ? `${pendingOrder.n} order(s) in progress.` : "No orders in progress."}</p>
-      </Section>
-      <Section title="Your journey">
+      </Section>}
+      {adoption && <Section title="Your journey">
         <p className="text-sm">
           Stage: <Badge tone="brand">{adoption.state.replace(/_/g, " ")}</Badge>
         </p>
@@ -123,7 +128,7 @@ async function ClinicOverview({ actor, userId }: { actor: ReturnType<typeof acto
           {adoption.state === "dormant" && "It's been a while. If something got in the way, the companion or Medical Support can help."}
           {adoption.state === "ordered" && "Your order is on its way. Review the protocol before your first case."}
         </p>
-      </Section>
+      </Section>}
     </div>
   );
 }

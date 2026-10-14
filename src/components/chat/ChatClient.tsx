@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Markdown } from "@/components/Markdown";
-import { confirmOrderFromChat } from "@/app/actions/chat";
+import { closeCaseFromChat, confirmOrderFromChat } from "@/app/actions/chat";
 import type { ChatCitation, ChatMessage, ChatPendingAction } from "./types";
 
 const AUTHORITY_SHORT: Record<number, string> = { 1: "IFU / Regulatory", 2: "Protocol", 3: "Peer-reviewed", 4: "Training", 5: "Case study", 6: "Distributor", 7: "Commercial" };
@@ -100,7 +100,7 @@ export function ChatClient({
                 }
               }}
               rows={Math.min(6, Math.max(1, input.split("\n").length))}
-              placeholder="Ask about a case, a product, evidence, stock or an order…"
+              placeholder="Ask about a case, a product or the evidence…"
               className="input resize-none py-2.5"
               maxLength={8000}
               aria-label="Message"
@@ -117,14 +117,14 @@ export function ChatClient({
 function Welcome({ name, onPick }: { name: string; onPick: (p: string) => void }) {
   const prompts = [
     "I have a 7mm pocket on 204 and I'm doing an open flap.",
-    "How many ReGum do I have left?",
+    "I'd like to give feedback on how ReGum handled in my last case.",
     "Is there evidence that ReGum improves periodontal regeneration?",
     "Which cases are due for follow-up?",
   ];
   return (
     <div className="py-10 text-center">
       <h2 className="text-lg font-semibold">Hello {name}. What are you working on?</h2>
-      <p className="mt-1 text-sm text-muted">Clinical questions, a case in progress, follow-ups, stock or reordering.</p>
+      <p className="mt-1 text-sm text-muted">Product questions, a case in progress, follow-ups and feedback.</p>
       <div className="mx-auto mt-6 grid max-w-xl gap-2 sm:grid-cols-2">
         {prompts.map((p) => (
           <button key={p} onClick={() => onPick(p)} className="card px-3 py-2.5 text-left text-sm hover:border-brand">{p}</button>
@@ -166,7 +166,7 @@ function MessageView({ m, conversationId, orderStatuses }: { m: ChatMessage; con
         </div>
       )}
       {m.pendingActions.map((a, i) => (
-        <PendingActionCard key={i} a={a} conversationId={conversationId} status={a.type === "confirm_order" ? orderStatuses[a.orderId] : undefined} />
+        <PendingActionCard key={i} a={a} conversationId={conversationId} status={a.type === "confirm_order" ? orderStatuses[a.orderId] : a.type === "confirm_close_case" ? orderStatuses[`case:${a.caseId}`] : undefined} />
       ))}
     </div>
   );
@@ -194,6 +194,37 @@ function PendingActionCard({ a, conversationId, status }: { a: ChatPendingAction
       <div className="mt-2 flex items-center justify-between rounded-xl border border-line bg-white px-4 py-2.5 text-sm">
         <span>Case saved: <span className="font-medium">{a.summary}</span></span>
         <Link href={`/cases/${a.caseId}`} className="text-brand hover:underline">Open case</Link>
+      </div>
+    );
+  }
+  if (a.type === "confirm_close_case") {
+    const closed = result?.ok || status === "closed";
+    return (
+      <div className="mt-2 rounded-xl border border-warn/40 bg-warn-soft/60 px-4 py-3 text-sm">
+        <div className="text-xs font-semibold uppercase tracking-wide text-warn">Close case — needs your confirmation</div>
+        <div className="mt-1">{a.summary}</div>
+        {a.outcomeNotes && <div className="mt-1 text-muted">Outcome: {a.outcomeNotes}</div>}
+        {closed ? (
+          <div className="mt-2 text-ok">{result?.ok ?? "Case closed."}</div>
+        ) : (
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              className="btn-danger"
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  const r = await closeCaseFromChat(a.caseId, a.outcomeNotes, conversationId);
+                  setResult(r ?? null);
+                })
+              }
+            >
+              {pending ? "Closing…" : "Close case"}
+            </button>
+            <Link href={`/cases/${a.caseId}`} className="text-brand hover:underline">Open case</Link>
+            {result?.error && <span className="text-danger">{result.error}</span>}
+          </div>
+        )}
+        <p className="mt-2 text-xs text-muted">Remaining scheduled follow-ups will be cancelled.</p>
       </div>
     );
   }

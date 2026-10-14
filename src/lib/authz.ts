@@ -40,10 +40,18 @@ export function assertClinicWrite(actor: Actor, clinicId: string): void {
   }
 }
 
-/** Clinic data may be read by its members, and by BioChange admins for account support. */
+/**
+ * Clinic data may be read by its members (cases are shared within a clinic) and, read-only,
+ * by BioChange staff for the clinical dashboard. Writes stay with the clinic (assertClinicWrite).
+ */
 export function assertClinicRead(actor: Actor, clinicId: string): void {
-  if (actor.role === "biochange_admin") return;
+  if (isBioChangeStaff(actor.role)) return;
   assertClinicWrite(actor, clinicId);
+}
+
+/** The internal clinical dashboard: every authorised BioChange user sees the same data. */
+export function assertBioChangeReader(actor: Actor): void {
+  if (!isBioChangeStaff(actor.role)) throw new AuthorizationError("The clinical dashboard is for BioChange staff.");
 }
 
 /** The actor's own clinic, required for clinic-scoped operations. */

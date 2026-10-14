@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { featureEnabled } from "@/lib/features";
 import { requireUser } from "@/lib/auth/session";
 import { actorFromSession } from "@/lib/authz";
 import { listEducation } from "@/server/domain/education";
@@ -11,6 +13,7 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 export default async function EducationPage({ searchParams }: { searchParams: Promise<{ product?: string; q?: string }> }) {
+  if (!featureEnabled("education")) notFound();
   const user = await requireUser();
   const sp = await searchParams;
   const [resources, profile] = await Promise.all([

@@ -6,10 +6,18 @@ import { actorFromSession } from "@/lib/authz";
 import { num, runAction, str, type ActionState } from "@/lib/actions";
 import { recordProductUsage, setInventoryConfirmed } from "@/server/domain/inventory";
 import { confirmOrder, prepareOrder, updateOrderStatus, type OrderStatus } from "@/server/domain/orders";
+import { featureEnabled, type Feature } from "@/lib/features";
+import { AuthorizationError } from "@/lib/authz";
+
+/** Inventory and ordering are outside the MVP; they run only where the feature is enabled. */
+function requireFeature(f: Feature) {
+  if (!featureEnabled(f)) throw new AuthorizationError("This feature is not available.");
+}
 
 export async function confirmInventoryAction(_p: ActionState, fd: FormData): Promise<ActionState> {
   const user = await requireUser();
   const r = await runAction(async () => {
+    requireFeature("inventory");
     const line = await setInventoryConfirmed(actorFromSession(user), str(fd, "product") ?? "", num(fd, "quantity") ?? -1, { lot: str(fd, "lot"), expiry: str(fd, "expiry") }, { tool: "ui" });
     return `Confirmed ${line.quantityConfirmed} × ${line.product}.`;
   });
@@ -20,6 +28,7 @@ export async function confirmInventoryAction(_p: ActionState, fd: FormData): Pro
 export async function recordUsageAction(_p: ActionState, fd: FormData): Promise<ActionState> {
   const user = await requireUser();
   const r = await runAction(async () => {
+    requireFeature("inventory");
     const res = await recordProductUsage(actorFromSession(user), { productRef: str(fd, "product") ?? "", quantity: num(fd, "quantity") ?? 1, note: str(fd, "note") }, { tool: "ui" });
     return `Recorded. Estimated stock: ${res.estimatedStock}.`;
   });
@@ -30,6 +39,7 @@ export async function recordUsageAction(_p: ActionState, fd: FormData): Promise<
 export async function prepareOrderAction(_p: ActionState, fd: FormData): Promise<ActionState> {
   const user = await requireUser();
   const r = await runAction(async () => {
+    requireFeature("orders");
     const o = await prepareOrder(actorFromSession(user), { productRef: str(fd, "product") ?? "", quantity: num(fd, "quantity") ?? 0, notes: str(fd, "notes") }, { tool: "ui" });
     return `Draft created: ${o.quantity} package(s) of ${o.product_name}. Review and confirm below.`;
   });
@@ -40,6 +50,7 @@ export async function prepareOrderAction(_p: ActionState, fd: FormData): Promise
 export async function confirmOrderAction(orderId: string, _p: ActionState): Promise<ActionState> {
   const user = await requireUser();
   const r = await runAction(async () => {
+    requireFeature("orders");
     await confirmOrder(actorFromSession(user), orderId, { tool: "ui" });
     return "Order recorded.";
   });
@@ -50,6 +61,7 @@ export async function confirmOrderAction(orderId: string, _p: ActionState): Prom
 export async function updateOrderStatusAction(orderId: string, _p: ActionState, fd: FormData): Promise<ActionState> {
   const user = await requireUser();
   const r = await runAction(async () => {
+    requireFeature("orders");
     await updateOrderStatus(actorFromSession(user), orderId, str(fd, "status") as OrderStatus, { tool: "ui" });
     return "Updated.";
   });

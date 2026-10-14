@@ -3,7 +3,9 @@ import crypto from "node:crypto";
 import { sql } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { assertKnowledgeManager, NotFoundError, ValidationError, type Actor } from "@/lib/authz";
-import { putFile, readFile, sanitizeFileName } from "@/lib/storage";
+import { deleteFile, putFile, readFile, sanitizeFileName } from "@/lib/storage";
+import { isOpenAIConfigured } from "@/lib/env";
+import { log } from "@/lib/log";
 import { embed, toVectorLiteral } from "@/server/ai/openai";
 import { chunkDocument } from "./chunk";
 import { CRITICAL_DOCUMENTS, DEFAULT_AUTHORITY, SOURCE_TYPES, type SourceType } from "./constants";
@@ -26,6 +28,9 @@ export interface SourceRow {
   regulatory_status: string | null;
   status: "pending_review" | "approved" | "revoked" | "superseded";
   approved_for_agent: boolean;
+  index_status: IndexStatus;
+  index_error: string | null;
+  indexed_at: Date | null;
   clinical_or_commercial: "clinical" | "commercial" | "both";
   tags: string[];
   extracted_text: string | null;
@@ -37,6 +42,7 @@ export interface SourceRow {
   last_reviewed_at: Date | null;
   reviewed_by: string | null;
   reviewer_name?: string | null;
+  creator_name?: string | null;
   effective_from: Date | null;
   effective_until: Date | null;
   notes: string | null;
@@ -68,9 +74,9 @@ const MAX_UPLOAD = 25 * 1024 * 1024;
 export async function listSources(actor: Actor, filter: { status?: string; product?: string } = {}): Promise<SourceRow[]> {
   assertKnowledgeManager(actor);
   return sql<SourceRow[]>`
-    SELECT s.*, u.name AS reviewer_name,
+    SELECT s.*, u.name AS reviewer_name, cr.name AS creator_name,
       (SELECT count(*)::int FROM knowledge_chunks c WHERE c.source_id = s.id) AS chunk_count
-    FROM knowledge_sources s LEFT JOIN users u ON u.id = s.reviewed_by
+    FROM knowledge_sources s LEFT JOIN users u ON u.id = s.reviewed_by LEFT JOIN users cr ON cr.id = s.created_by
     WHERE (${filter.status ?? null}::text IS NULL OR s.status = ${filter.status ?? null})
       AND (${filter.product ?? null}::text IS NULL OR s.product = ${filter.product ?? null})
     ORDER BY s.authority_level, s.product NULLS LAST, s.updated_at DESC`;
@@ -82,9 +88,9 @@ export async function listSources(actor: Actor, filter: { status?: string; produ
  */
 export async function getSource(actor: Actor, id: string): Promise<SourceRow & { study: Record<string, unknown> | null }> {
   const [row] = await sql<SourceRow[]>`
-    SELECT s.*, u.name AS reviewer_name,
+    SELECT s.*, u.name AS reviewer_name, cr.name AS creator_name,
       (SELECT count(*)::int FROM knowledge_chunks c WHERE c.source_id = s.id) AS chunk_count
-    FROM knowledge_sources s LEFT JOIN users u ON u.id = s.reviewed_by WHERE s.id = ${id}`;
+    FROM knowledge_sources s LEFT JOIN users u ON u.id = s.reviewed_by LEFT JOIN users cr ON cr.id = s.created_by WHERE s.id = ${id}`;
   if (!row) throw new NotFoundError("Source not found");
   const staff = actor.role === "biochange_admin" || actor.role === "biochange_medical";
   if (!staff && row.status !== "approved") throw new NotFoundError("Source not found");
@@ -222,7 +228,10 @@ export async function reparseSource(actor: Actor, id: string): Promise<void> {
         updated_at = now()
       WHERE id = ${id}`;
     const [s] = await tx<{ status: string }[]>`SELECT status FROM knowledge_sources WHERE id = ${id}`;
-    if (s.status !== "approved") await tx`DELETE FROM knowledge_chunks WHERE source_id = ${id}`;
+    if (s.status !== "approved") {
+      await tx`DELETE FROM knowledge_chunks WHERE source_id = ${id}`;
+      await tx`UPDATE knowledge_sources SET index_status = 'not_indexed', index_error = NULL, indexed_at = NULL WHERE id = ${id}`;
+    }
     await audit(actor, { action: "knowledge_source.reparse", entityType: "knowledge_source", entityId: id, tool: "admin", result: error ? "error" : "success", inputSummary: error }, tx);
   });
 }
@@ -250,16 +259,15 @@ export async function updateSource(actor: Actor, id: string, input: SourceInput 
       WHERE id = ${id}`;
     await audit(actor, { action: "knowledge_source.update", entityType: "knowledge_source", entityId: id, tool: "admin", inputSummary: textChanged ? "metadata + content edited (returned to review)" : "metadata edited" }, tx);
   });
-  const [after] = await sql<{ status: string }[]>`SELECT status FROM knowledge_sources WHERE id = ${id}`;
-  if (after.status === "approved") await indexSource(id);
-  else await sql`DELETE FROM knowledge_chunks WHERE source_id = ${id}`;
+  // Re-indexes an approved source; clears passages and index status of one that is no longer approved.
+  await indexSource(id);
 }
 
 /**
  * Marks a reviewed source APPROVED FOR AGENT and indexes it. If it supersedes an older
  * version, the older version is marked superseded and removed from retrieval.
  */
-export async function approveSource(actor: Actor, id: string): Promise<{ chunks: number; embedded: boolean }> {
+export async function approveSource(actor: Actor, id: string): Promise<IndexResult> {
   assertKnowledgeManager(actor);
   const src = await getSource(actor, id);
   if (src.is_placeholder || !src.extracted_text?.trim()) {
@@ -270,6 +278,7 @@ export async function approveSource(actor: Actor, id: string): Promise<{ chunks:
     if (src.supersedes_source_id) {
       await tx`UPDATE knowledge_sources SET status = 'superseded', updated_at = now() WHERE id = ${src.supersedes_source_id} AND status = 'approved'`;
       await tx`DELETE FROM knowledge_chunks WHERE source_id = ${src.supersedes_source_id}`;
+      await tx`UPDATE knowledge_sources SET index_status = 'not_indexed', index_error = NULL, indexed_at = NULL WHERE id = ${src.supersedes_source_id}`;
     }
     await audit(actor, { action: "knowledge_source.approve", entityType: "knowledge_source", entityId: id, tool: "admin", inputSummary: `${src.title}${src.supersedes_source_id ? ` (supersedes ${src.supersedes_source_id})` : ""}` }, tx);
   });
@@ -283,37 +292,124 @@ export async function revokeSource(actor: Actor, id: string, reason: string | nu
     await tx`UPDATE knowledge_sources SET status = 'revoked', last_reviewed_at = now(), reviewed_by = ${actor.userId},
              notes = concat_ws(E'\n', notes, ${reason ? `Revoked: ${reason}` : null}::text), updated_at = now() WHERE id = ${id}`;
     await tx`DELETE FROM knowledge_chunks WHERE source_id = ${id}`;
+    await tx`UPDATE knowledge_sources SET index_status = 'not_indexed', index_error = NULL, indexed_at = NULL WHERE id = ${id}`;
     await audit(actor, { action: "knowledge_source.revoke", entityType: "knowledge_source", entityId: id, tool: "admin", inputSummary: reason }, tx);
   });
 }
 
-/** (Re)builds the retrieval chunks for an approved source. */
-export async function indexSource(id: string): Promise<{ chunks: number; embedded: boolean }> {
+export type IndexStatus = "not_indexed" | "indexed" | "keyword_only" | "failed";
+export interface IndexResult {
+  chunks: number;
+  embedded: boolean;
+  status: IndexStatus;
+  error: string | null;
+}
+
+/**
+ * (Re)builds the retrieval chunks for an approved source and records the outcome on the
+ * source (index_status / index_error / indexed_at), so a failure is visible in Admin and
+ * never silent. "keyword_only" means the passages are searchable but without embeddings.
+ */
+export async function indexSource(id: string): Promise<IndexResult> {
   const [src] = await sql<SourceRow[]>`SELECT * FROM knowledge_sources WHERE id = ${id}`;
   if (!src || src.status !== "approved" || !src.extracted_text) {
-    await sql`DELETE FROM knowledge_chunks WHERE source_id = ${id}`;
-    return { chunks: 0, embedded: false };
+    await sql.begin(async (tx) => {
+      await tx`DELETE FROM knowledge_chunks WHERE source_id = ${id}`;
+      await tx`UPDATE knowledge_sources SET index_status = 'not_indexed', index_error = NULL, indexed_at = NULL WHERE id = ${id}`;
+    });
+    return { chunks: 0, embedded: false, status: "not_indexed", error: null };
   }
-  const chunks = chunkDocument(deserializePages(src.extracted_text));
-  let vectors: number[][] | null = null;
+  const fail = async (error: string): Promise<IndexResult> => {
+    await sql.begin(async (tx) => {
+      await tx`DELETE FROM knowledge_chunks WHERE source_id = ${id}`;
+      await tx`UPDATE knowledge_sources SET index_status = 'failed', index_error = ${error}, indexed_at = now() WHERE id = ${id}`;
+    });
+    log.error("knowledge.index_failed", { source: id });
+    return { chunks: 0, embedded: false, status: "failed", error };
+  };
+
+  let chunks: ReturnType<typeof chunkDocument>;
   try {
-    vectors = await embed(chunks.map((c) => `${src.title}${c.section ? ` — ${c.section}` : ""}\n${c.content}`));
+    chunks = chunkDocument(deserializePages(src.extracted_text));
   } catch (err) {
-    console.error("[knowledge] embedding failed; chunks indexed for keyword search only", err);
+    return fail(`Chunking failed: ${err instanceof Error ? err.message.slice(0, 200) : "unknown error"}`);
   }
+  if (!chunks.length) return fail("No passages could be created from the extracted text.");
+
+  let vectors: number[][] | null = null;
+  let embedError: string | null = isOpenAIConfigured() ? null : "Semantic search unavailable: OPENAI_API_KEY is not configured (keyword search only).";
+  if (isOpenAIConfigured()) {
+    try {
+      vectors = await embed(chunks.map((c) => `${src.title}${c.section ? ` — ${c.section}` : ""}\n${c.content}`));
+    } catch (err) {
+      log.warn("knowledge.embedding_failed", { source: id, err });
+      embedError = `Embedding failed (${err instanceof Error ? err.name : "error"}); indexed for keyword search only. Run "Re-index" to retry.`;
+    }
+  }
+  const status: IndexStatus = vectors ? "indexed" : "keyword_only";
+  try {
+    await sql.begin(async (tx) => {
+      await tx`DELETE FROM knowledge_chunks WHERE source_id = ${id}`;
+      for (let i = 0; i < chunks.length; i++) {
+        const c = chunks[i];
+        await tx`
+          INSERT INTO knowledge_chunks (source_id, chunk_index, content, source_title, source_type, authority_level, product,
+            document_version, country, section, page, claim_type, approved_status, embedding)
+          VALUES (${id}, ${i}, ${c.content}, ${src.title}, ${src.source_type}, ${src.authority_level}, ${src.product},
+            ${src.version}, ${src.country_or_market}, ${c.section}, ${c.page}, ${claimTypeFor(src.source_type)}, ${src.status},
+            ${vectors ? toVectorLiteral(vectors[i]) : null}::vector)`;
+      }
+      await tx`UPDATE knowledge_sources SET index_status = ${status}, index_error = ${embedError}, indexed_at = now() WHERE id = ${id}`;
+    });
+  } catch (err) {
+    log.error("knowledge.index_write_failed", { source: id, err });
+    return fail("Saving the indexed passages failed. Try Re-index; if it persists, contact the administrator.");
+  }
+  return { chunks: chunks.length, embedded: Boolean(vectors), status, error: embedError };
+}
+
+/** Admin action: rebuild the index of an approved source (e.g. after an embedding outage). */
+export async function reindexSource(actor: Actor, id: string): Promise<IndexResult> {
+  assertKnowledgeManager(actor);
+  const src = await getSource(actor, id);
+  if (src.status !== "approved") throw new ValidationError("Only approved sources are indexed.");
+  const r = await indexSource(id);
+  await audit(actor, { action: "knowledge_source.reindex", entityType: "knowledge_source", entityId: id, tool: "admin", result: r.status === "failed" ? "error" : "success", inputSummary: r.status });
+  return r;
+}
+
+/**
+ * Whether the agent can use this source right now, and if not, why. Mirrors the filters in
+ * searchKnowledge (approved, not a placeholder, in its effective window, has passages).
+ */
+export function agentAvailability(s: Pick<SourceRow, "status" | "is_placeholder" | "effective_from" | "effective_until" | "chunk_count"> & { index_status: IndexStatus }): { available: boolean; reason: string } {
+  if (s.status !== "approved") return { available: false, reason: s.status.replace("_", " ") };
+  if (s.is_placeholder) return { available: false, reason: "placeholder" };
+  const today = new Date().toISOString().slice(0, 10);
+  if (s.effective_from && new Date(s.effective_from).toISOString().slice(0, 10) > today) return { available: false, reason: "not yet effective" };
+  if (s.effective_until && new Date(s.effective_until).toISOString().slice(0, 10) < today) return { available: false, reason: "expired" };
+  if (s.index_status === "failed") return { available: false, reason: "indexing failed" };
+  if (!s.chunk_count) return { available: false, reason: "not indexed" };
+  return { available: true, reason: s.index_status === "keyword_only" ? "keyword search only" : "available" };
+}
+
+/**
+ * Permanently deletes a source: its passages (so it can never be retrieved again), its
+ * metadata and its stored file. Use Revoke to stop using a source but keep the record.
+ */
+export async function deleteSource(actor: Actor, id: string, reason: string | null): Promise<void> {
+  assertKnowledgeManager(actor);
+  if (!reason?.trim()) throw new ValidationError("A reason is required to delete a source.");
+  const src = await getSource(actor, id);
   await sql.begin(async (tx) => {
     await tx`DELETE FROM knowledge_chunks WHERE source_id = ${id}`;
-    for (let i = 0; i < chunks.length; i++) {
-      const c = chunks[i];
-      await tx`
-        INSERT INTO knowledge_chunks (source_id, chunk_index, content, source_title, source_type, authority_level, product,
-          document_version, country, section, page, claim_type, approved_status, embedding)
-        VALUES (${id}, ${i}, ${c.content}, ${src.title}, ${src.source_type}, ${src.authority_level}, ${src.product},
-          ${src.version}, ${src.country_or_market}, ${c.section}, ${c.page}, ${claimTypeFor(src.source_type)}, ${src.status},
-          ${vectors ? toVectorLiteral(vectors[i]) : null}::vector)`;
-    }
+    await tx`DELETE FROM knowledge_sources WHERE id = ${id}`;
+    await audit(actor, { action: "knowledge_source.delete", entityType: "knowledge_source", entityId: id, tool: "admin",
+      inputSummary: `${src.source_type}: ${src.title} — ${reason.trim().slice(0, 300)}` }, tx);
   });
-  return { chunks: chunks.length, embedded: Boolean(vectors) };
+  if (src.storage_path) {
+    await deleteFile(src.storage_path).catch((err) => log.error("knowledge.file_delete_failed", { source: id, err }));
+  }
 }
 
 function claimTypeFor(type: SourceType): string {

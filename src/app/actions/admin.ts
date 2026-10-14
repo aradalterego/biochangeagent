@@ -10,7 +10,11 @@ import { safeTimeZone } from "@/lib/format";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblems } from "@/lib/auth/password";
 import { ROLES, type Role } from "@/lib/roles";
-import { approveSource, createSource, reparseSource, revokeSource, updateSource, upsertStudy, type SourceInput } from "@/server/knowledge/sources";
+import { env } from "@/lib/env";
+import { sendEmail } from "@/lib/email";
+import { log } from "@/lib/log";
+import { approveSource, createSource, deleteSource, reindexSource, reparseSource, revokeSource, updateSource, upsertStudy, type IndexResult, type SourceInput } from "@/server/knowledge/sources";
+import { savePolicy } from "@/server/domain/agentPolicy";
 import { SOURCE_TYPES, type SourceType } from "@/server/knowledge/constants";
 import { saveClaim } from "@/server/knowledge/claims";
 import { convertToKnowledge, setEscalationStatus, type EscalationStatus } from "@/server/domain/escalations";
@@ -95,14 +99,58 @@ export async function uploadSourceFileAction(id: string, _p: ActionState, fd: Fo
   return r;
 }
 
+function indexMessage(prefix: string, r: IndexResult): string {
+  if (r.status === "failed") throw new ValidationError(`${prefix}, but indexing FAILED: ${r.error} The agent cannot use this source yet.`);
+  if (r.status === "keyword_only") return `${prefix}: ${r.chunks} passages, keyword search only. ${r.error ?? ""}`.trim();
+  return `${prefix}: ${r.chunks} passages (semantic + keyword search). Available to the agent.`;
+}
+
 export async function approveSourceAction(id: string, _p: ActionState): Promise<ActionState> {
   const actor = await staff();
-  const r = await runAction(async () => {
-    const res = await approveSource(actor, id);
-    return `Approved and indexed: ${res.chunks} passages${res.embedded ? " (semantic + keyword search)" : " (keyword search only — set OPENAI_API_KEY and run kb:reindex for semantic search)"}.`;
-  });
+  const r = await runAction(async () => indexMessage("Approved", await approveSource(actor, id)));
   revalidatePath(`/admin/knowledge/${id}`);
   revalidatePath("/admin/knowledge");
+  return r;
+}
+
+export async function reindexSourceAction(id: string, _p: ActionState): Promise<ActionState> {
+  const actor = await staff();
+  const r = await runAction(async () => indexMessage("Re-indexed", await reindexSource(actor, id)));
+  revalidatePath(`/admin/knowledge/${id}`);
+  return r;
+}
+
+/** Permanent deletion (passages, record and stored file). */
+export async function deleteSourceAction(id: string, _p: ActionState, fd: FormData): Promise<ActionState> {
+  const actor = await staff();
+  let deleted = false;
+  const r = await runAction(async () => {
+    if (str(fd, "confirm") !== "DELETE") throw new ValidationError('Type DELETE to confirm.');
+    await deleteSource(actor, id, str(fd, "reason"));
+    deleted = true;
+  });
+  if (deleted) {
+    revalidatePath("/admin/knowledge");
+    redirect("/admin/knowledge");
+  }
+  return r;
+}
+
+export async function savePolicyAction(_p: ActionState, fd: FormData): Promise<ActionState> {
+  const actor = await staff();
+  const r = await runAction(async () => {
+    await savePolicy(actor, {
+      allowedTopics: str(fd, "allowed_topics"),
+      disallowedTopics: str(fd, "disallowed_topics"),
+      outOfScopeMessage: str(fd, "out_of_scope_message"),
+      escalationContactName: str(fd, "escalation_contact_name"),
+      escalationContactEmail: str(fd, "escalation_contact_email"),
+      escalationContactPhone: str(fd, "escalation_contact_phone"),
+      productScope: fd.getAll("product_scope").filter((v): v is string => typeof v === "string"),
+    });
+    return "Saved. The agent uses the new policy from the next message.";
+  });
+  revalidatePath("/admin/agent-policy");
   return r;
 }
 
@@ -222,23 +270,55 @@ export async function createUserAction(_p: ActionState, fd: FormData): Promise<A
     const email = str(fd, "email")?.toLowerCase();
     const name = str(fd, "name");
     const role = str(fd, "role") as Role;
-    const password = str(fd, "password") ?? "";
+    const password = str(fd, "password");
     const clinicId = str(fd, "clinic_id");
     if (!email || !name) throw new ValidationError("Name and email are required.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ValidationError("Enter a valid email address.");
     if (!ROLES.includes(role)) throw new ValidationError("Invalid role.");
     if ((role === "veterinarian" || role === "clinic_admin") && !clinicId) throw new ValidationError("Clinic users need a clinic.");
-    const problem = passwordProblems(password);
-    if (problem) throw new ValidationError(problem);
+    // Veterinarians sign in with an emailed link (or Google); a password is optional and meant for staff.
+    if (password) {
+      const problem = passwordProblems(password);
+      if (problem) throw new ValidationError(problem);
+    }
     const [exists] = await sql`SELECT 1 FROM users WHERE email = ${email}`;
     if (exists) throw new ValidationError("A user with this email already exists.");
     const [u] = await sql<{ id: string }[]>`
-      INSERT INTO users (email, name, role, clinic_id, professional_title, country, timezone, password_hash)
+      INSERT INTO users (email, name, role, clinic_id, professional_title, country, timezone, password_hash, invited_at)
       VALUES (${email}, ${name}, ${role}, ${role === "veterinarian" || role === "clinic_admin" ? clinicId : null}, ${str(fd, "professional_title")},
-              ${str(fd, "country")}, ${validTimeZone(str(fd, "timezone"))}, ${await hashPassword(password)})
+              ${str(fd, "country")}, ${validTimeZone(str(fd, "timezone"))}, ${password ? await hashPassword(password) : null}, now())
       RETURNING id`;
     if (role === "veterinarian" || role === "clinic_admin") await sql`INSERT INTO veterinarian_profiles (user_id) VALUES (${u.id})`;
-    await audit(actor, { action: "user.create", entityType: "user", entityId: u.id, tool: "admin", inputSummary: `${role} ${email}` });
-    return "User created. Share the temporary password securely.";
+    await audit(actor, { action: "user.create", entityType: "user", entityId: u.id, tool: "admin", inputSummary: `${role}${password ? " (password)" : " (invite)"}` });
+    let emailed = false;
+    if (fd.get("send_invite") === "on") {
+      try {
+        await sendEmail({
+          to: email,
+          subject: "You're invited to BioChange Vet Companion",
+          text: `Hello ${name},\n\nBioChange has invited you to the BioChange Vet Companion.\n\nSign in at ${env().APP_URL.replace(/\/$/, "")}/login with this email address: you will receive a one-time sign-in link. No password is needed.\n`,
+        });
+        emailed = true;
+      } catch (err) {
+        log.error("admin.invite_email_failed", { err });
+      }
+    }
+    return emailed ? "User created and invitation emailed." : "User created. They can sign in at /login with their email address.";
+  });
+  revalidatePath("/admin/accounts");
+  return r;
+}
+
+/** Clears a user's authenticator enrolment (lost phone). They enrol again at next sign-in. */
+export async function resetMfaAction(userId: string, _p: ActionState): Promise<ActionState> {
+  const actor = await staff();
+  const r = await runAction(async () => {
+    assertBioChangeAdmin(actor);
+    if (userId === actor.userId) throw new ValidationError("Ask another administrator to reset your own two-step verification.");
+    await sql`UPDATE users SET totp_secret_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = ${userId}`;
+    await sql`DELETE FROM sessions WHERE user_id = ${userId}`;
+    await audit(actor, { action: "user.mfa_reset", entityType: "user", entityId: userId, tool: "admin" });
+    return "Two-step verification reset. The user enrols again at next sign-in.";
   });
   revalidatePath("/admin/accounts");
   return r;

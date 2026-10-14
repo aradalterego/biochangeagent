@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Logo } from "./Logo";
 import { NavLink } from "./NavLink";
-import { logoutAction } from "@/app/actions/auth";
+import { logoutAction, logoutEverywhereAction } from "@/app/actions/auth";
+import { featureEnabled } from "@/lib/features";
 import type { SessionUser } from "@/lib/auth/session";
 import { ROLE_LABELS, isBioChangeStaff, isClinicRole } from "@/lib/roles";
 
@@ -25,17 +26,22 @@ export function Sidebar({ user, conversations }: { user: SessionUser; conversati
         {clinic && (
           <>
             <NavLink href="/cases">Cases</NavLink>
-            <NavLink href="/inventory">Inventory</NavLink>
-            <NavLink href="/orders">Orders</NavLink>
+            {featureEnabled("inventory") && <NavLink href="/inventory">Inventory</NavLink>}
+            {featureEnabled("orders") && <NavLink href="/orders">Orders</NavLink>}
           </>
         )}
-        <NavLink href="/education">Education</NavLink>
+        {featureEnabled("education") && <NavLink href="/education">Education</NavLink>}
         <NavLink href="/support">Medical Support</NavLink>
         <NavLink href="/profile">Profile &amp; memory</NavLink>
         {staff && (
           <>
+            <div className="mt-5 mb-1 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted">Clinical data</div>
+            <NavLink href="/dashboard">Dashboard</NavLink>
+            <NavLink href="/dashboard/cases">All cases</NavLink>
+            <NavLink href="/dashboard/vets">Veterinarians</NavLink>
             <div className="mt-5 mb-1 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted">Admin</div>
             <NavLink href="/admin/knowledge">Knowledge Sources</NavLink>
+            <NavLink href="/admin/agent-policy">Agent policy</NavLink>
             <NavLink href="/admin/claims">Approved Claims</NavLink>
             <NavLink href="/admin/gaps">Knowledge Gaps</NavLink>
             <NavLink href="/admin/escalations">Escalations</NavLink>
@@ -63,9 +69,14 @@ export function Sidebar({ user, conversations }: { user: SessionUser; conversati
       <div className="border-t border-line px-4 py-3 text-xs">
         <div className="font-medium text-ink">{user.name}</div>
         <div className="text-muted">{ROLE_LABELS[user.role]}</div>
-        <form action={logoutAction}>
-          <button className="mt-2 text-brand hover:underline">Sign out</button>
-        </form>
+        <div className="mt-2 flex gap-3">
+          <form action={logoutAction}>
+            <button className="text-brand hover:underline">Sign out</button>
+          </form>
+          <form action={logoutEverywhereAction}>
+            <button className="text-muted hover:underline" title="Sign out on all devices">All devices</button>
+          </form>
+        </div>
       </div>
     </aside>
   );

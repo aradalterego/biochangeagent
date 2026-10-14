@@ -3,11 +3,12 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth/session";
 import { actorFromSession, NotFoundError } from "@/lib/authz";
 import { sql } from "@/lib/db";
-import { getSource } from "@/server/knowledge/sources";
+import { agentAvailability, getSource } from "@/server/knowledge/sources";
 import { isUuid } from "@/server/domain/cases";
 import { AUTHORITY_LEVELS, SOURCE_TYPE_LABELS } from "@/server/knowledge/constants";
 import {
-  addLinkedDocumentAction, approveSourceAction, reparseSourceAction, revokeSourceAction, saveStudyAction, updateSourceAction, uploadSourceFileAction,
+  addLinkedDocumentAction, approveSourceAction, deleteSourceAction, reindexSourceAction, reparseSourceAction, revokeSourceAction, saveStudyAction,
+  updateSourceAction, uploadSourceFileAction,
 } from "@/app/actions/admin";
 import { ActionForm } from "@/components/ActionForm";
 import { SourceFields } from "@/components/SourceFields";
@@ -31,6 +32,7 @@ export default async function SourceReviewPage({ params }: { params: Promise<{ i
   const supersededBy = await sql<{ id: string; title: string; status: string }[]>`SELECT id, title, status FROM knowledge_sources WHERE supersedes_source_id = ${id}`;
   const study = s.study as Record<string, string | number | string[] | null> | null;
   const canApprove = !s.is_placeholder && Boolean(s.extracted_text?.trim()) && s.status !== "approved";
+  const availability = agentAvailability(s);
 
   return (
     <Page wide>
@@ -119,9 +121,15 @@ export default async function SourceReviewPage({ params }: { params: Promise<{ i
 
         <div>
           <Section title="3. Decision">
+            <div className={`mb-3 rounded-lg px-3 py-2 text-sm ${availability.available ? (availability.reason === "available" ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn") : s.index_status === "failed" ? "bg-danger-soft text-danger" : "bg-canvas text-muted"}`}>
+              <div className="font-medium">{availability.available ? "Available to the agent" : "Not available to the agent"}{availability.reason !== "available" ? ` — ${availability.reason}` : ""}</div>
+              <div className="mt-0.5 text-xs">Index: {s.index_status.replace("_", " ")}{s.indexed_at ? ` · ${fmtDateTime(s.indexed_at, user.timezone)}` : ""} · {s.chunk_count} passages</div>
+              {s.index_error && <div className="mt-1 text-xs">{s.index_error}</div>}
+            </div>
             {s.status === "approved" ? (
               <>
                 <p className="text-sm text-ok">Approved for agent · {s.chunk_count} indexed passages.</p>
+                {(s.index_status !== "indexed") && <ActionForm action={reindexSourceAction.bind(null, s.id)} submitLabel="Re-index" submitClassName="btn-secondary mt-3" />}
                 <ActionForm action={revokeSourceAction.bind(null, s.id)} submitLabel="Revoke" submitClassName="btn-danger mt-3" confirm="Revoke this source? It will immediately stop being used in answers.">
                   <input name="reason" placeholder="Reason" className="input mt-3" />
                 </ActionForm>
@@ -139,10 +147,17 @@ export default async function SourceReviewPage({ params }: { params: Promise<{ i
             {s.supersedes_source_id && <p className="mt-3 text-xs text-muted">Supersedes <Link className="text-brand" href={`/admin/knowledge/${s.supersedes_source_id}`}>an older version</Link> when approved.</p>}
             {supersededBy.map((x) => <p key={x.id} className="mt-2 text-xs text-muted">Newer version: <Link className="text-brand" href={`/admin/knowledge/${x.id}`}>{x.title}</Link> ({x.status})</p>)}
           </Section>
+          <Section title="Delete permanently">
+            <p className="text-sm text-muted">Removes the passages (so it can never be retrieved again), this record and the stored file. To stop using a source but keep its history, use Revoke instead.</p>
+            <ActionForm action={deleteSourceAction.bind(null, s.id)} submitLabel="Delete source" submitClassName="btn-danger mt-3" confirm="Permanently delete this source and its file? This cannot be undone.">
+              <input name="reason" required placeholder="Reason (kept in the audit log)" className="input mt-3" />
+              <input name="confirm" required placeholder="Type DELETE" className="input mt-2" autoComplete="off" />
+            </ActionForm>
+          </Section>
           <Section title="Source record">
             <dl className="space-y-1 text-xs text-muted">
               <div>ID: <span className="font-mono">{s.id}</span></div>
-              <div>Created: {fmtDateTime(s.created_at, user.timezone)}</div>
+              <div>Created: {fmtDateTime(s.created_at, user.timezone)}{s.creator_name ? ` by ${s.creator_name}` : ""}</div>
               <div>Updated: {fmtDateTime(s.updated_at, user.timezone)}</div>
               <div>File: {s.file_name ?? "—"}</div>
               <div>Parse status: {s.parse_status}</div>

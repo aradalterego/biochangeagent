@@ -5,6 +5,7 @@ import { actorFromSession, AuthorizationError, NotFoundError, ValidationError } 
 import { sameOrigin } from "@/lib/http";
 import { sql } from "@/lib/db";
 import { processMessage } from "@/server/agent/processMessage";
+import { log } from "@/lib/log";
 
 export const maxDuration = 120;
 
@@ -33,13 +34,13 @@ export async function POST(req: Request) {
   try {
     const message = await processMessage(
       { actor: actorFromSession(user), channel: "web", content: parsed.data.content, conversationId: parsed.data.conversationId, caseId: parsed.data.caseId },
-      { runExtraction: (job) => after(() => job().catch((e) => console.error("[agent] extraction failed", e))) },
+      { runExtraction: (job) => after(() => job().catch((err) => log.error("agent.extraction_failed", { err }))) },
     );
     return NextResponse.json({ message });
   } catch (err) {
     if (err instanceof ValidationError || err instanceof NotFoundError) return NextResponse.json({ error: err.message }, { status: 400 });
     if (err instanceof AuthorizationError) return NextResponse.json({ error: err.message }, { status: 403 });
-    console.error("[api/chat]", err);
+    log.error("api.chat_failed", { err });
     return NextResponse.json({ error: "The message could not be processed. Please try again." }, { status: 500 });
   }
 }

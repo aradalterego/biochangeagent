@@ -1,4 +1,5 @@
 import { AuthorizationError, NotFoundError, ValidationError } from "./authz";
+import { log } from "./log";
 
 export type ActionState = { error?: string; ok?: string } | undefined;
 
@@ -11,7 +12,7 @@ export async function runAction(fn: () => Promise<string | void>): Promise<Actio
     if (err instanceof ValidationError || err instanceof AuthorizationError || err instanceof NotFoundError) return { error: err.message };
     // Next.js redirects/notFound are thrown as errors and must propagate.
     if (err && typeof err === "object" && "digest" in err) throw err;
-    console.error("[action] failed", err);
+    log.error("action.failed", { err });
     return { error: "Something went wrong. Please try again." };
   }
 }

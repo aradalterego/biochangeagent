@@ -32,7 +32,7 @@ export async function createMedicalSupportRequest(actor: Actor, input: Escalatio
     await tx`UPDATE knowledge_gaps SET escalated = true, escalation_id = ${r.id}
              WHERE normalized_question = ${normalizeQuestion(input.question)} AND escalation_id IS NULL`;
     await audit(actor, { action: "medical_support.create", entityType: "medical_support_request", entityId: r.id, tool: ctx.tool,
-      sourceMessageId: ctx.sourceMessageId, inputSummary: `[${urgency}] ${input.question}` }, tx);
+      sourceMessageId: ctx.sourceMessageId, inputSummary: `[${urgency}]${input.product ? ` ${input.product}` : ""}` }, tx);
     return { id: r.id, status: "new" as const, createdAt: r.created_at };
   });
 }
@@ -81,7 +81,7 @@ export async function setEscalationStatus(actor: Actor, id: string, status: Esca
              answered_at = CASE WHEN ${status} = 'answered' THEN now() ELSE answered_at END,
              answer_seen_at = CASE WHEN ${status} = 'answered' THEN NULL ELSE answer_seen_at END,
              updated_at = now() WHERE id = ${id}`;
-    await audit(actor, { action: `medical_support.${status}`, entityType: "medical_support_request", entityId: id, tool: "admin", inputSummary: answer ?? null }, tx);
+    await audit(actor, { action: `medical_support.${status}`, entityType: "medical_support_request", entityId: id, tool: "admin", inputSummary: answer?.trim() ? `answer ${answer.trim().length} characters` : null }, tx);
   });
 }
 
@@ -107,6 +107,7 @@ export async function convertToKnowledge(actor: Actor, id: string) {
   return sourceId;
 }
 
+/** Unicode-aware (Hebrew and other scripts keep their letters; only punctuation is dropped). */
 export function normalizeQuestion(q: string): string {
-  return q.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+  return q.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, " ").replace(/\s+/g, " ").trim().slice(0, 300);
 }

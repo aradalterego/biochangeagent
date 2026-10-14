@@ -87,7 +87,7 @@ export async function updateUserProfile(actor: Actor, patch: ProfilePatch, ctx: 
                ON CONFLICT (user_id) DO UPDATE SET ${tx(vp)}, updated_at = now()`;
     }
     await audit(actor, { action: "profile.update", entityType: "user", entityId: actor.userId, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId,
-      inputSummary: JSON.stringify(patch) }, tx);
+      inputSummary: Object.keys(patch).filter((k) => patch[k as keyof typeof patch] != null).join(", ") }, tx);
   });
   return getUserProfile(actor.userId);
 }

@@ -4,6 +4,9 @@ import { audit, type OpContext } from "@/lib/audit";
 import { assertClinicRead, assertClinicWrite, NotFoundError, requireClinic, ValidationError, type Actor } from "@/lib/authz";
 import { resolveProduct } from "./products";
 import { recomputeAdoption } from "./adoption";
+import type { FeedbackRow } from "./feedback";
+import { deleteFile } from "@/lib/storage";
+import { log } from "@/lib/log";
 
 export const CASE_STATUSES = ["discussion", "planned", "treated", "follow_up_due", "followed_up", "closed"] as const;
 export type CaseStatus = (typeof CASE_STATUSES)[number];
@@ -92,19 +95,22 @@ export async function getCaseRow(actor: Actor, id: string): Promise<CaseRow> {
 
 export async function getCase(actor: Actor, id: string) {
   const c = await getCaseRow(actor, id);
-  const [notes, followUps, measurements, files, conversations, usage] = await Promise.all([
+  const [notes, followUps, measurements, files, conversations, usage, feedback] = await Promise.all([
     sql`SELECT n.id, n.content, n.created_at, u.name AS author FROM case_notes n LEFT JOIN users u ON u.id = n.author_id
         WHERE n.case_id = ${id} ORDER BY n.created_at`,
     sql`SELECT * FROM follow_ups WHERE case_id = ${id} ORDER BY due_at`,
     sql`SELECT * FROM case_measurements WHERE case_id = ${id} ORDER BY measured_at, created_at`,
     sql`SELECT id, file_type, file_name, mime_type, size_bytes, description, uploaded_at, follow_up_id FROM case_files
-        WHERE case_id = ${id} ORDER BY uploaded_at`,
+        WHERE case_id = ${id} AND deleted_at IS NULL ORDER BY uploaded_at`,
     sql`SELECT cv.id, cv.title, cv.last_message_at FROM case_conversations cc JOIN conversations cv ON cv.id = cc.conversation_id
         WHERE cc.case_id = ${id} AND cv.user_id = ${actor.userId} ORDER BY cv.last_message_at DESC`,
     sql`SELECT e.quantity, e.created_at, p.name AS product FROM inventory_events e JOIN products p ON p.id = e.product_id
         WHERE e.case_id = ${id} AND e.event_type = 'usage' ORDER BY e.created_at`,
+    sql<FeedbackRow[]>`SELECT f.*, p.name AS product_name, u.name AS author FROM case_feedback f
+        LEFT JOIN products p ON p.id = f.product_id LEFT JOIN users u ON u.id = f.author_id
+        WHERE f.case_id = ${id} ORDER BY f.created_at`,
   ]);
-  return { case: c, notes, followUps, measurements, files, conversations, usage };
+  return { case: c, notes, followUps, measurements, files, conversations, usage, feedback };
 }
 
 function validate(input: CaseInput) {
@@ -146,7 +152,7 @@ export async function createCase(actor: Actor, input: CaseInput, ctx: OpContext 
       await tx`UPDATE conversations SET active_case_id = ${row.id} WHERE id = ${ctx.conversationId} AND user_id = ${actor.userId}`;
     }
     await audit(actor, { action: "case.create", entityType: "case", entityId: row.id, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId,
-      inputSummary: summarize(input) }, tx);
+      inputSummary: fieldsProvided(input) }, tx);
     return row.id;
   });
   return getCaseRow(actor, id);
@@ -197,7 +203,7 @@ export async function closeCase(actor: Actor, id: string, outcomeNotes: string |
   await sql.begin(async (tx) => {
     await tx`UPDATE cases SET status = 'closed', outcome_notes = coalesce(${outcomeNotes}, outcome_notes), follow_up_date = NULL, updated_at = now() WHERE id = ${id}`;
     await tx`UPDATE follow_ups SET status = 'cancelled' WHERE case_id = ${id} AND status = 'scheduled'`;
-    await audit(actor, { action: "case.close", entityType: "case", entityId: id, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId, inputSummary: outcomeNotes }, tx);
+    await audit(actor, { action: "case.close", entityType: "case", entityId: id, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId, inputSummary: outcomeNotes ? "with outcome notes" : null }, tx);
   });
   return getCaseRow(actor, id);
 }
@@ -209,7 +215,7 @@ export async function addCaseNote(actor: Actor, caseId: string, content: string,
   return sql.begin(async (tx) => {
     const [n] = await tx<{ id: string }[]>`INSERT INTO case_notes (case_id, author_id, content) VALUES (${caseId}, ${actor.userId}, ${content.trim()}) RETURNING id`;
     await tx`UPDATE cases SET updated_at = now() WHERE id = ${caseId}`;
-    await audit(actor, { action: "case.add_note", entityType: "case", entityId: caseId, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId, inputSummary: content }, tx);
+    await audit(actor, { action: "case.add_note", entityType: "case", entityId: caseId, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId, inputSummary: `${content.trim().length} characters` }, tx);
     return n;
   });
 }
@@ -224,7 +230,7 @@ export async function scheduleFollowUp(actor: Actor, caseId: string, dueAt: stri
     await tx`UPDATE cases SET follow_up_date = (SELECT min(due_at) FROM follow_ups WHERE case_id = ${caseId} AND status = 'scheduled'),
              updated_at = now() WHERE id = ${caseId}`;
     await audit(actor, { action: "follow_up.schedule", entityType: "follow_up", entityId: f.id, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId,
-      inputSummary: `case ${caseId} due ${dueAt}${reason ? `: ${reason}` : ""}` }, tx);
+      inputSummary: `case ${caseId} due ${dueAt}` }, tx);
     return f;
   });
 }
@@ -257,7 +263,7 @@ export async function completeFollowUp(actor: Actor, followUpId: string, result:
              follow_up_date = (SELECT min(due_at) FROM follow_ups WHERE case_id = ${f.case_id} AND status = 'scheduled'),
              updated_at = now() WHERE id = ${f.case_id}`;
     await audit(actor, { action: "follow_up.complete", entityType: "follow_up", entityId: followUpId, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId,
-      inputSummary: `case ${f.case_id}; PD ${result.pocketDepthMm ?? "n/a"} mm; ${result.outcome ?? result.notes ?? ""}` }, tx);
+      inputSummary: `case ${f.case_id}; fields: ${fieldsProvided(result)}` }, tx);
   });
   await recomputeAdoption(actor.userId);
   return getCase(actor, f.case_id);
@@ -270,6 +276,22 @@ export async function followUpsForClinic(actor: Actor) {
     FROM follow_ups f JOIN cases c ON c.id = f.case_id LEFT JOIN products p ON p.id = c.product_id
     WHERE c.clinic_id = ${clinicId} AND f.status = 'scheduled'
     ORDER BY f.due_at`;
+}
+
+/** Deletes a case file: removed from storage and hidden; the row is kept (soft delete) for the audit trail. */
+export async function deleteCaseFile(actor: Actor, fileId: string, ctx: OpContext = {}): Promise<void> {
+  if (!isUuid(fileId)) throw new NotFoundError("File not found");
+  const [f] = await sql<{ case_id: string; storage_path: string; deleted_at: Date | null }[]>`
+    SELECT case_id, storage_path, deleted_at FROM case_files WHERE id = ${fileId}`;
+  if (!f || f.deleted_at) throw new NotFoundError("File not found");
+  const c = await getCaseRow(actor, f.case_id);
+  assertClinicWrite(actor, c.clinic_id);
+  await sql.begin(async (tx) => {
+    await tx`UPDATE case_files SET deleted_at = now(), deleted_by = ${actor.userId} WHERE id = ${fileId}`;
+    await tx`UPDATE cases SET updated_at = now() WHERE id = ${f.case_id}`;
+    await audit(actor, { action: "case.delete_file", entityType: "case_file", entityId: fileId, tool: ctx.tool ?? "ui" }, tx);
+  });
+  await deleteFile(f.storage_path).catch((err) => log.error("case.file_delete_failed", { file: fileId, err }));
 }
 
 export function linkConversation(caseId: string, conversationId: string) {
@@ -287,9 +309,10 @@ export function isUuid(s: unknown): s is string {
   return typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
-function summarize(input: CaseInput): string {
+/** Audit entries name the fields that were set, never their clinical values. */
+function fieldsProvided(input: object): string {
   return Object.entries(input)
     .filter(([, v]) => v != null && v !== "")
-    .map(([k, v]) => `${k}=${v}`)
-    .join("; ");
+    .map(([k]) => k)
+    .join(", ") || "none";
 }

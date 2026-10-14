@@ -11,7 +11,7 @@ import { ValidationError } from "./authz";
  * (local driver) or redirect to a short-lived signed URL (Supabase driver).
  */
 
-export type FileKind = "pdf" | "png" | "jpeg" | "webp" | "dicom" | "text";
+export type FileKind = "pdf" | "png" | "jpeg" | "webp" | "dicom" | "text" | "csv" | "xlsx";
 
 const MIME_BY_KIND: Record<FileKind, string> = {
   pdf: "application/pdf",
@@ -20,10 +20,21 @@ const MIME_BY_KIND: Record<FileKind, string> = {
   webp: "image/webp",
   dicom: "application/dicom",
   text: "text/plain",
+  csv: "text/csv",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
-/** Identify a file by its content (magic bytes), not by its claimed name or MIME type. */
-export function sniffKind(buf: Buffer): FileKind | null {
+const EXT_BY_KIND: Record<FileKind, string> = { pdf: "pdf", png: "png", jpeg: "jpg", webp: "webp", dicom: "dcm", text: "txt", csv: "csv", xlsx: "xlsx" };
+
+export const IMAGE_KINDS: FileKind[] = ["png", "jpeg", "webp"];
+
+/**
+ * Identify a file by its content (magic bytes), not by its claimed name or MIME type.
+ * The name is used only to tell CSV from plain text (both are UTF-8 text).
+ * Spreadsheets: only macro-free .xlsx (Office Open XML) is accepted; .xls/.xlsm are refused.
+ */
+export function sniffKind(buf: Buffer, fileName?: string | null): FileKind | null {
+  if (buf.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) return isPlainXlsx(buf) ? "xlsx" : null;
   if (buf.subarray(0, 5).toString("latin1") === "%PDF-") return "pdf";
   if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpeg";
@@ -35,12 +46,68 @@ export function sniffKind(buf: Buffer): FileKind | null {
     try {
       // stream:true tolerates a multibyte character cut at the 4 KB boundary.
       new TextDecoder("utf-8", { fatal: true }).decode(head, { stream: buf.length > head.length });
-      return "text";
+      return /\.csv$/i.test(fileName ?? "") ? "csv" : "text";
     } catch {
       return null;
     }
   }
   return null;
+}
+
+/** Entry names from a zip's central directory, or null if the archive structure is invalid. */
+export function zipEntryNames(buf: Buffer): string[] | null {
+  // End of central directory: last 22..(22+65535) bytes.
+  const min = Math.max(0, buf.length - 22 - 0xffff);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= min; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return null;
+  const count = buf.readUInt16LE(eocd + 10);
+  let off = buf.readUInt32LE(eocd + 16);
+  const names: string[] = [];
+  for (let n = 0; n < count; n++) {
+    if (off + 46 > buf.length || buf.readUInt32LE(off) !== 0x02014b50) return null;
+    const nameLen = buf.readUInt16LE(off + 28);
+    const extraLen = buf.readUInt16LE(off + 30);
+    const commentLen = buf.readUInt16LE(off + 32);
+    if (off + 46 + nameLen > buf.length) return null;
+    names.push(buf.subarray(off + 46, off + 46 + nameLen).toString("utf8"));
+    off += 46 + nameLen + extraLen + commentLen;
+  }
+  return names;
+}
+
+/** Office Open XML workbook without VBA/macros, embedded objects or external binaries. */
+function isPlainXlsx(buf: Buffer): boolean {
+  const names = zipEntryNames(buf);
+  if (!names || !names.includes("[Content_Types].xml") || !names.includes("xl/workbook.xml")) return false;
+  if (names.some((n) => n.includes("..") || n.startsWith("/"))) return false;
+  if (names.some((n) => /vbaProject\.bin$|^xl\/embeddings\/|^xl\/activeX\/|\.(exe|dll|js|vbs|bat|cmd|ps1|sh)$/i.test(n))) return false;
+  return true;
+}
+
+/**
+ * Re-encodes an image: drops EXIF/XMP/GPS and other metadata (which can reveal location or
+ * device and owner details) and neutralises polyglot files. EXIF orientation is applied first.
+ */
+export async function sanitizeImage(buf: Buffer, kind: FileKind): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  try {
+    const img = sharp(buf, { limitInputPixels: 80_000_000, failOn: "error" }).rotate();
+    if (kind === "png") return await img.png().toBuffer();
+    if (kind === "webp") return await img.webp({ quality: 92 }).toBuffer();
+    return await img.jpeg({ quality: 92, mozjpeg: true }).toBuffer();
+  } catch {
+    throw new ValidationError("The image could not be processed. Please upload a valid JPEG, PNG or WebP file.");
+  }
+}
+
+export function isImageKind(kind: string): boolean {
+  return IMAGE_KINDS.includes(kind as FileKind);
 }
 
 export function mimeFor(kind: FileKind): string {
@@ -60,15 +127,22 @@ export interface StoredFile {
   sha256: string;
 }
 
-export async function putFile(prefix: "cases" | "knowledge", buf: Buffer, allowed: FileKind[], maxBytes: number): Promise<StoredFile> {
-  if (buf.length === 0) throw new ValidationError("The file is empty.");
-  if (buf.length > maxBytes) throw new ValidationError(`File is too large (max ${Math.round(maxBytes / 1024 / 1024)} MB).`);
-  const kind = sniffKind(buf);
+export async function putFile(
+  prefix: "cases" | "knowledge",
+  input: Buffer,
+  allowed: FileKind[],
+  maxBytes: number,
+  opts: { fileName?: string | null; sanitizeImages?: boolean } = {},
+): Promise<StoredFile> {
+  if (input.length === 0) throw new ValidationError("The file is empty.");
+  if (input.length > maxBytes) throw new ValidationError(`File is too large (max ${Math.round(maxBytes / 1024 / 1024)} MB).`);
+  const kind = sniffKind(input, opts.fileName);
   if (!kind || !allowed.includes(kind)) {
     throw new ValidationError(`Unsupported file type. Allowed: ${allowed.join(", ")}.`);
   }
-  const ext = kind === "jpeg" ? "jpg" : kind === "text" ? "txt" : kind === "dicom" ? "dcm" : kind;
-  const storagePath = `${prefix}/${new Date().toISOString().slice(0, 7)}/${crypto.randomUUID()}.${ext}`;
+  const buf = opts.sanitizeImages && isImageKind(kind) ? await sanitizeImage(input, kind) : input;
+  // Random internal name: the uploaded file name is never used as a path.
+  const storagePath = `${prefix}/${new Date().toISOString().slice(0, 7)}/${crypto.randomUUID()}.${EXT_BY_KIND[kind]}`;
   const e = env();
   if (e.STORAGE_DRIVER === "supabase") {
     const res = await fetch(`${supabaseBase()}/object/${e.SUPABASE_STORAGE_BUCKET}/${storagePath}`, {
@@ -101,8 +175,26 @@ export async function readFile(storagePath: string): Promise<Buffer> {
   return fs.readFile(localPath(storagePath));
 }
 
-/** Short-lived signed URL (Supabase) or null for the local driver (caller streams instead). */
-export async function signedUrl(storagePath: string, expiresInSeconds = 120): Promise<string | null> {
+/** Removes a stored object (used when a file or knowledge source is deleted). Missing objects are not an error. */
+export async function deleteFile(storagePath: string): Promise<void> {
+  const e = env();
+  if (e.STORAGE_DRIVER === "supabase") {
+    const res = await fetch(`${supabaseBase()}/object/${e.SUPABASE_STORAGE_BUCKET}`, {
+      method: "DELETE",
+      headers: { ...supabaseHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ prefixes: [storagePath] }),
+    });
+    if (!res.ok && res.status !== 404) throw new Error(`Storage delete failed (${res.status})`);
+    return;
+  }
+  await fs.rm(localPath(storagePath), { force: true });
+}
+
+/**
+ * Short-lived signed URL (Supabase) or null for the local driver (caller streams instead).
+ * `downloadAs` makes the storage server send it as an attachment instead of rendering it.
+ */
+export async function signedUrl(storagePath: string, expiresInSeconds = 120, downloadAs?: string): Promise<string | null> {
   const e = env();
   if (e.STORAGE_DRIVER !== "supabase") return null;
   const res = await fetch(`${supabaseBase()}/object/sign/${e.SUPABASE_STORAGE_BUCKET}/${storagePath}`, {
@@ -113,7 +205,8 @@ export async function signedUrl(storagePath: string, expiresInSeconds = 120): Pr
   if (!res.ok) throw new Error(`Could not sign storage URL (${res.status})`);
   const body = (await res.json()) as { signedURL?: string };
   if (!body.signedURL) throw new Error("Storage did not return a signed URL");
-  return `${supabaseBase()}${body.signedURL}`;
+  const url = `${supabaseBase()}${body.signedURL}`;
+  return downloadAs ? `${url}${url.includes("?") ? "&" : "?"}download=${encodeURIComponent(downloadAs)}` : url;
 }
 
 function localPath(storagePath: string): string {

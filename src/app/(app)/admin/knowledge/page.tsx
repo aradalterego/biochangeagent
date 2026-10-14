@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/session";
 import { actorFromSession } from "@/lib/authz";
-import { listSources, missingCriticalDocuments } from "@/server/knowledge/sources";
+import { agentAvailability, listSources, missingCriticalDocuments } from "@/server/knowledge/sources";
 import { SOURCE_TYPE_LABELS } from "@/server/knowledge/constants";
 import { Badge, Page, PageHeader, Section, statusTone } from "@/components/ui";
 import { fmtDate } from "@/lib/format";
@@ -30,9 +30,11 @@ export default async function KnowledgeSourcesPage({ searchParams }: { searchPar
       <Section title={`${sources.length} source(s)`}>
         <div className="overflow-x-auto">
           <table className="table">
-            <thead><tr><th>Lvl</th><th>Title</th><th>Type</th><th>Product</th><th>Version</th><th>Status</th><th>Content</th><th>Reviewed</th></tr></thead>
+            <thead><tr><th>Lvl</th><th>Title</th><th>Type</th><th>Product</th><th>Version</th><th>Status</th><th>Content</th><th>Used by agent</th><th>Uploaded</th><th>Reviewed</th></tr></thead>
             <tbody>
-              {sources.map((s) => (
+              {sources.map((s) => {
+                const a = agentAvailability(s);
+                return (
                 <tr key={s.id} className="hover:bg-canvas">
                   <td className="font-semibold">{s.authority_level}</td>
                   <td className="max-w-md">
@@ -44,9 +46,14 @@ export default async function KnowledgeSourcesPage({ searchParams }: { searchPar
                   <td>{s.version ?? "—"}</td>
                   <td><Badge tone={statusTone(s.status)}>{s.status.replace("_", " ")}</Badge></td>
                   <td>{s.is_placeholder ? <Badge tone="warn">placeholder</Badge> : s.parse_status === "parsed" ? `${s.chunk_count} passages` : <Badge tone={s.parse_status === "failed" ? "danger" : "neutral"}>{s.parse_status.replace("_", " ")}</Badge>}</td>
+                  <td>
+                    <Badge tone={a.available ? (a.reason === "available" ? "ok" : "warn") : s.index_status === "failed" || s.parse_status === "failed" ? "danger" : "neutral"}>{a.available ? (a.reason === "available" ? "yes" : a.reason) : `no — ${a.reason}`}</Badge>
+                  </td>
+                  <td>{fmtDate(s.created_at)}<div className="text-xs text-muted">{s.creator_name ?? ""}</div></td>
                   <td>{fmtDate(s.last_reviewed_at)}<div className="text-xs text-muted">{s.reviewer_name ?? ""}</div></td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

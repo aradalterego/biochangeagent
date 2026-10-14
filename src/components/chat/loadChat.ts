@@ -24,5 +24,13 @@ export async function loadConversation(user: SessionUser, id: string) {
   const statuses = orderIds.length && user.clinicId
     ? await sql<{ id: string; status: string }[]>`SELECT id, status FROM orders WHERE id = ANY(${orderIds}::uuid[]) AND clinic_id = ${user.clinicId}`
     : [];
-  return { conv, messages, orderStatuses: Object.fromEntries(statuses.map((s) => [s.id, s.status])) };
+  const caseIds = messages.flatMap((m) => m.pendingActions.filter((a) => a.type === "confirm_close_case").map((a) => (a as { caseId: string }).caseId));
+  const caseStatuses = caseIds.length && user.clinicId
+    ? await sql<{ id: string; status: string }[]>`SELECT id, status FROM cases WHERE id = ANY(${caseIds}::uuid[]) AND clinic_id = ${user.clinicId}`
+    : [];
+  return {
+    conv,
+    messages,
+    orderStatuses: Object.fromEntries([...statuses.map((s) => [s.id, s.status]), ...caseStatuses.map((c) => [`case:${c.id}`, c.status])]),
+  };
 }

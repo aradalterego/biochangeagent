@@ -1,14 +1,14 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import { audit } from "@/lib/audit";
-import { AuthorizationError, NotFoundError, ValidationError, type Actor } from "@/lib/authz";
+import { AuthorizationError, NotFoundError, ValidationError, assertClinicWrite, type Actor } from "@/lib/authz";
 import { AUTHORITY_LEVELS, SOURCE_TYPES } from "@/server/knowledge/constants";
 import { searchKnowledge, type KnowledgeHit } from "@/server/knowledge/retrieve";
 import { getSource } from "@/server/knowledge/sources";
 import { getApprovedClaims } from "@/server/knowledge/claims";
 import { getUserProfile, updateUserProfile, getClinic, getClinicSummary } from "@/server/domain/profile";
 import {
-  CASE_STATUSES, addCaseNote, clinicToday, closeCase, completeFollowUp, createCase, getCase, isUuid, linkConversation, scheduleFollowUp,
+  CASE_STATUSES, addCaseNote, clinicToday, completeFollowUp, createCase, getCase, getCaseRow, isUuid, linkConversation, scheduleFollowUp,
   searchCases, updateCase, type CaseInput,
 } from "@/server/domain/cases";
 import { estimateInventory, getInventory, recordProductUsage, setInventoryConfirmed } from "@/server/domain/inventory";
@@ -20,6 +20,9 @@ import { logKnowledgeGap } from "@/server/domain/gaps";
 import { MEMORY_TYPES, saveMemory, type MemoryType } from "@/server/domain/memory";
 import { listProducts } from "@/server/domain/products";
 import { arr, bool, enumOf, int, nullable, num, obj, str } from "./schema";
+import { FEEDBACK_PHASES, WOULD_USE_AGAIN, recordCaseFeedback, type FeedbackPhase } from "@/server/domain/feedback";
+import { enabledFeatures, type Feature } from "@/lib/features";
+import { log } from "@/lib/log";
 
 // ---------------------------------------------------------------------------
 // Turn state shared by the tools during one agent turn
@@ -41,7 +44,8 @@ export interface Citation {
 
 export type PendingAction =
   | { type: "confirm_order"; orderId: string; summary: string }
-  | { type: "open_case"; caseId: string; summary: string };
+  | { type: "open_case"; caseId: string; summary: string }
+  | { type: "confirm_close_case"; caseId: string; summary: string; outcomeNotes: string | null };
 
 export interface TurnState {
   actor: Actor;
@@ -117,6 +121,8 @@ interface ToolDef {
   description: string;
   parameters: Record<string, unknown>;
   mutating: boolean;
+  /** Optional product area (outside the MVP) this tool belongs to; hidden when the feature is off. */
+  feature?: Feature;
   run: (args: Record<string, any>, state: TurnState) => Promise<unknown>; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
@@ -307,7 +313,8 @@ export const TOOLS: ToolDef[] = [
     async run(a, state) {
       const id = requireCaseId(a.case_id, state);
       const c = await getCase(state.actor, id);
-      return { ...c, case: caseBrief(c.case), files: c.files.map((f) => ({ type: f.file_type, name: f.file_name, description: f.description })) };
+      // File names are not sent to the model (they may contain client or patient names); contents never are.
+      return { ...c, case: caseBrief(c.case), files: c.files.map((f) => ({ type: f.file_type, uploaded: dateOnly(f.uploaded_at) })) };
     },
   },
   {
@@ -349,12 +356,15 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "close_case",
-    description: "Close a case (cancels remaining scheduled follow-ups).",
+    description: "Propose closing a case (remaining follow-ups would be cancelled). It only shows the veterinarian a confirmation button; the case closes when they press it.",
     parameters: obj({ case_id: nstr(), outcome_notes: nstr() }),
-    mutating: true,
+    mutating: false,
     async run(a, state) {
-      const c = await closeCase(state.actor, requireCaseId(a.case_id, state), a.outcome_notes, ctxOf(state, "close_case"));
-      return { ok: true, case: caseBrief(c) };
+      const c = await getCaseRow(state.actor, requireCaseId(a.case_id, state));
+      assertClinicWrite(state.actor, c.clinic_id);
+      if (c.status === "closed") return { ok: false, error: "This case is already closed." };
+      state.pendingActions.push({ type: "confirm_close_case", caseId: c.id, summary: caseTitle(c), outcomeNotes: a.outcome_notes ?? null });
+      return { ok: true, status: "awaiting_user_confirmation", next_step: "The user must press 'Close case' on the card. Do not say it was closed." };
     },
   },
   {
@@ -402,9 +412,33 @@ export const TOOLS: ToolDef[] = [
       return { ok: true, case: caseBrief(r.case), measurements: r.measurements };
     },
   },
+  {
+    name: "record_case_feedback",
+    description: "Save structured product and ease-of-use feedback the veterinarian gave about a case. Only what they actually said; ratings only if they gave a number (1–5).",
+    parameters: obj({
+      case_id: nstr("Defaults to the active case."),
+      phase: enumOf(FEEDBACK_PHASES, "treatment = about the procedure; follow_up = at recheck; general = other."),
+      product: nstr(),
+      product_rating: nint("1–5, only if the veterinarian gave it."),
+      ease_of_use_rating: nint("1–5, only if the veterinarian gave it."),
+      would_use_again: nullable(enumOf(WOULD_USE_AGAIN)),
+      product_feedback: nstr("The veterinarian's own words about the product/result."),
+      usability_feedback: nstr("Ease of use: preparation, handling, placement."),
+      handling_notes: nstr(),
+    }),
+    mutating: true,
+    async run(a, state) {
+      const r = await recordCaseFeedback(state.actor, requireCaseId(a.case_id, state), {
+        phase: a.phase as FeedbackPhase, product: a.product, productRating: a.product_rating, easeOfUseRating: a.ease_of_use_rating,
+        wouldUseAgain: a.would_use_again, productFeedback: a.product_feedback, usabilityFeedback: a.usability_feedback, handlingNotes: a.handling_notes,
+      }, { ...ctxOf(state, "record_case_feedback"), source: "chat" });
+      return { ok: true, feedback_id: r.id };
+    },
+  },
   // ----- Inventory -----
   {
     name: "get_inventory",
+    feature: "inventory",
     description: "Clinic inventory per product: CONFIRMED count (+date) vs ESTIMATED stock from recorded usage.",
     parameters: obj({ product: nstr() }),
     mutating: false,
@@ -412,6 +446,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "set_inventory_confirmed",
+    feature: "inventory",
     description: "Record a stock count the user explicitly stated (e.g. 'I have 6 ReGum on the shelf'). Resets the estimate.",
     parameters: obj({ product: str(), quantity: int("Units on hand.") }),
     mutating: true,
@@ -421,6 +456,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "record_product_usage",
+    feature: "inventory",
     description: "Record units used (ideally on a case). Lowers ESTIMATED stock. Resolve the case and product variant first.",
     parameters: obj({ product: str(), quantity: int(), case_id: nstr("Case the units were used on (defaults to none; pass the active case id when it applies).") }),
     mutating: true,
@@ -431,6 +467,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "estimate_inventory",
+    feature: "inventory",
     description: "Reorder estimate per product from recorded usage, case volume and typical order size (weeks until likely stock-out). An estimate, never certain.",
     parameters: obj({ product: nstr() }),
     mutating: false,
@@ -439,6 +476,7 @@ export const TOOLS: ToolDef[] = [
   // ----- Orders -----
   {
     name: "get_order_history",
+    feature: "orders",
     description: "Recent orders for the clinic (including drafts).",
     parameters: obj({}),
     mutating: false,
@@ -446,6 +484,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "prepare_order",
+    feature: "orders",
     description: "Create a DRAFT order (packages). Does NOT place or submit anything. The user confirms with a button.",
     parameters: obj({ product: str(), quantity_packages: int(), notes: nstr() }),
     mutating: true,
@@ -458,6 +497,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "confirm_order_record",
+    feature: "orders",
     description: "Present the confirmation card for an existing DRAFT order. It does not record the order — only the user's button press does.",
     parameters: obj({ order_id: str() }),
     mutating: false,
@@ -470,6 +510,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "update_order_status",
+    feature: "orders",
     description: "Update a recorded order's status (confirmed, shipped, received, cancelled). 'received' adds units to estimated stock. Drafts can only be cancelled here.",
     parameters: obj({ order_id: str(), status: enumOf(ORDER_STATUSES.filter((s) => s !== "draft" && s !== "submitted")) }),
     mutating: true,
@@ -481,6 +522,7 @@ export const TOOLS: ToolDef[] = [
   // ----- Education -----
   {
     name: "search_training_material",
+    feature: "education",
     description: "Find education resources (tutorials, webinars, studies, case studies, training courses), personalised by what the user already opened/completed.",
     parameters: obj({ query: nstr(), product: nullable(enumOf(["ReGum Vet", "MicroFoam"])) }),
     mutating: false,
@@ -488,6 +530,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "record_training_activity",
+    feature: "education",
     description: "Record that the user opened or completed an education resource (only if they said so).",
     parameters: obj({ resource_id: str(), completed: bool() }),
     mutating: true,
@@ -496,6 +539,7 @@ export const TOOLS: ToolDef[] = [
   // ----- Adoption -----
   {
     name: "get_adoption_state",
+    feature: "adoption",
     description: "Current adoption stage of the user (interested → trained → ordered → first use → active → repeat user / dormant).",
     parameters: obj({}),
     mutating: false,
@@ -506,6 +550,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "update_adoption_state",
+    feature: "adoption",
     description: "Adjust the adoption state when the user tells you something the data cannot show (e.g. they stopped using the product).",
     parameters: obj({ state: enumOf(ADOPTION_STATES), reason: str() }),
     mutating: true,
@@ -537,9 +582,14 @@ export const TOOLS: ToolDef[] = [
 
 const TOOL_MAP = new Map(TOOLS.map((t) => [t.name, t]));
 
-/** Function tool declarations for the Responses API. */
+function activeTools(): ToolDef[] {
+  const features = enabledFeatures();
+  return TOOLS.filter((t) => !t.feature || features.has(t.feature));
+}
+
+/** Function tool declarations for the Responses API (only tools of enabled product areas). */
 export function toolDeclarations() {
-  return TOOLS.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters, strict: true }));
+  return activeTools().map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters, strict: true }));
 }
 
 /**
@@ -548,7 +598,7 @@ export function toolDeclarations() {
  */
 export async function executeTool(name: string, rawArgs: string, state: TurnState): Promise<unknown> {
   const tool = TOOL_MAP.get(name);
-  if (!tool) return { ok: false, error: `Unknown tool ${name}` };
+  if (!tool || (tool.feature && !enabledFeatures().has(tool.feature))) return { ok: false, error: `Unknown tool ${name}` };
   let args: Record<string, unknown>;
   try {
     args = rawArgs ? JSON.parse(rawArgs) : {};
@@ -561,12 +611,12 @@ export async function executeTool(name: string, rawArgs: string, state: TurnStat
     return result;
   } catch (err) {
     const known = err instanceof AuthorizationError || err instanceof ValidationError || err instanceof NotFoundError;
-    if (!known) console.error(`[agent] tool ${name} failed`, err);
+    if (!known) log.error("agent.tool_failed", { tool: name, err });
     state.toolLog.push({ name, ok: false, summary: known ? (err as Error).message : "internal error" });
     if (tool.mutating) {
       await audit(state.actor, {
         action: `tool.${name}`, entityType: "tool_call", tool: name, sourceMessageId: state.userMessageId,
-        inputSummary: `${summarizeArgs(args)} → ${known ? (err as Error).message : "internal error"}`,
+        inputSummary: `args: ${Object.keys(args).filter((k) => args[k] != null && args[k] !== "").join(", ") || "none"} → ${err instanceof AuthorizationError ? "not_authorized" : err instanceof NotFoundError ? "not_found" : err instanceof ValidationError ? "invalid" : "internal_error"}`,
         result: err instanceof AuthorizationError ? "denied" : "error",
       }).catch(() => {});
     }

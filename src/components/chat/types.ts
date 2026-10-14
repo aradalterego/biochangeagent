@@ -13,7 +13,8 @@ export interface ChatCitation {
 
 export type ChatPendingAction =
   | { type: "confirm_order"; orderId: string; summary: string }
-  | { type: "open_case"; caseId: string; summary: string };
+  | { type: "open_case"; caseId: string; summary: string }
+  | { type: "confirm_close_case"; caseId: string; summary: string; outcomeNotes: string | null };
 
 export interface ChatMessage {
   id: string;

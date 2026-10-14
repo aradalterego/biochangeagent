@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import { embed, toVectorLiteral } from "@/server/ai/openai";
+import { log } from "@/lib/log";
 
 export interface KnowledgeHit {
   chunkId: string;
@@ -53,7 +54,7 @@ export async function searchKnowledge(q: KnowledgeQuery): Promise<KnowledgeHit[]
     const e = await embed([q.query]);
     vector = e ? toVectorLiteral(e[0]) : null;
   } catch (err) {
-    console.error("[knowledge] embedding failed; falling back to keyword search", err);
+    log.warn("knowledge.query_embedding_failed", { err });
   }
   if (!tsq && !vector) return [];
 

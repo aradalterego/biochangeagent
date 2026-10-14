@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { featureEnabled } from "@/lib/features";
 import { requireRole } from "@/lib/auth/session";
 import { actorFromSession } from "@/lib/authz";
 import { sql } from "@/lib/db";
@@ -9,6 +11,7 @@ import { Badge, Empty, Page, PageHeader, Section } from "@/components/ui";
 import { fmtDate, fmtDateTime } from "@/lib/format";
 
 export default async function InventoryPage() {
+  if (!featureEnabled("inventory")) notFound();
   const user = await requireRole(["veterinarian", "clinic_admin"]);
   const actor = actorFromSession(user);
   const [lines, forecasts, products] = await Promise.all([getInventory(actor), estimateInventory(actor), listProducts()]);

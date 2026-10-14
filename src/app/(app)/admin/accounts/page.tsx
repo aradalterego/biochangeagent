@@ -1,7 +1,8 @@
 import { requireRole } from "@/lib/auth/session";
 import { sql } from "@/lib/db";
 import { ROLES, ROLE_LABELS } from "@/lib/roles";
-import { createClinicAction, createUserAction, setUserActiveAction } from "@/app/actions/admin";
+import { createClinicAction, createUserAction, resetMfaAction, setUserActiveAction } from "@/app/actions/admin";
+import { isBioChangeStaff } from "@/lib/roles";
 import { ActionForm } from "@/components/ActionForm";
 import { Badge, Page, PageHeader, Section } from "@/components/ui";
 import { fmtDate } from "@/lib/format";
@@ -15,30 +16,35 @@ export default async function AccountsPage() {
       (SELECT count(*)::int FROM cases x WHERE x.clinic_id = c.id) AS cases,
       (SELECT count(*)::int FROM orders o WHERE o.clinic_id = c.id AND o.status NOT IN ('draft', 'cancelled')) AS orders
     FROM clinics c LEFT JOIN distributors d ON d.id = c.distributor_id ORDER BY c.name`;
-  const users = await sql<{ id: string; name: string; email: string; role: keyof typeof ROLE_LABELS; clinic: string | null; active: boolean; last_active_at: Date | null; state: string | null; conversations: number }[]>`
-    SELECT u.id, u.name, u.email, u.role, c.name AS clinic, u.active, u.last_active_at, a.state,
+  const users = await sql<{ id: string; name: string; email: string; role: keyof typeof ROLE_LABELS; clinic: string | null; active: boolean; last_active_at: Date | null; last_login_at: Date | null; state: string | null; conversations: number; mfa: boolean; sign_in: string | null }[]>`
+    SELECT u.id, u.name, u.email, u.role, c.name AS clinic, u.active, u.last_active_at, u.last_login_at, a.state,
+      u.totp_enabled_at IS NOT NULL AS mfa, u.auth_provider AS sign_in,
       (SELECT count(*)::int FROM conversations cv WHERE cv.user_id = u.id) AS conversations
     FROM users u LEFT JOIN clinics c ON c.id = u.clinic_id LEFT JOIN adoption_states a ON a.user_id = u.id
     ORDER BY u.role, u.name`;
   const distributors = await sql<{ id: string; name: string }[]>`SELECT id, name FROM distributors WHERE active ORDER BY name`;
   return (
     <Page wide>
-      <PageHeader title="Users & Clinics" subtitle="Account state, adoption stage and activity." />
+      <PageHeader title="Users & Clinics" subtitle="Invitations, sign-in state and activity." />
       <Section title="Users">
         <div className="overflow-x-auto">
           <table className="table">
-            <thead><tr><th>Name</th><th>Role</th><th>Clinic</th><th>Adoption</th><th>Conversations</th><th>Last active</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Role</th><th>Clinic</th><th>Sign-in</th><th>Conversations</th><th>Last active</th><th></th></tr></thead>
             <tbody>
               {users.map((u) => (
                 <tr key={u.id}>
                   <td>{u.name}<div className="text-xs text-muted">{u.email}</div></td>
                   <td>{ROLE_LABELS[u.role]}</td>
                   <td>{u.clinic ?? "—"}</td>
-                  <td>{u.state ? <Badge tone="brand">{u.state.replace(/_/g, " ")}</Badge> : "—"}</td>
+                  <td>
+                    {u.last_login_at ? <span className="text-xs">{fmtDate(u.last_login_at)}</span> : <Badge tone="warn">invited</Badge>}
+                    {isBioChangeStaff(u.role) && <div className="mt-0.5"><Badge tone={u.mfa ? "ok" : "warn"}>{u.mfa ? "2-step on" : "2-step not set up"}</Badge></div>}
+                  </td>
                   <td>{u.conversations}</td>
                   <td>{fmtDate(u.last_active_at)}</td>
-                  <td>
+                  <td className="space-y-1">
                     <ActionForm action={setUserActiveAction.bind(null, u.id, !u.active)} submitLabel={u.active ? "Deactivate" : "Activate"} submitClassName={u.active ? "btn-danger" : "btn-secondary"} />
+                    {u.mfa && <ActionForm action={resetMfaAction.bind(null, u.id)} submitLabel="Reset 2-step" submitClassName="btn-secondary" confirm="Reset this user's two-step verification? They will enrol a new authenticator at next sign-in." />}
                   </td>
                 </tr>
               ))}
@@ -78,8 +84,10 @@ export default async function AccountsPage() {
               <div><label className="label">Title</label><input name="professional_title" className="input" /></div>
               <div><label className="label">Country</label><input name="country" className="input" /></div>
               <div><label className="label">Timezone</label><input name="timezone" placeholder="UTC" className="input" /></div>
-              <div><label className="label">Temporary password</label><input name="password" type="text" autoComplete="off" required className="input" /></div>
+              <div><label className="label">Password (staff only, optional)</label><input name="password" type="password" autoComplete="new-password" className="input" placeholder="Leave empty for email sign-in" /></div>
             </div>
+            <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" name="send_invite" defaultChecked /> Email an invitation</label>
+            <p className="mt-1 text-xs text-muted">Veterinarians sign in with a one-time email link (or Google). Only invited, active users can sign in.</p>
           </ActionForm>
         </Section>
       </div>

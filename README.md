@@ -62,6 +62,43 @@ Web UI (Next.js)                     future: WhatsApp / Messenger / RCS adapters
 
 ---
 
+## MVP scope (current production path)
+
+The MVP has four interfaces on one backend, one database, one session/authorisation layer and one agent:
+
+| Interface | Route | Who |
+|---|---|---|
+| Professional agent (chat, cited answers from approved knowledge only) | `/chat` | Signed-in veterinarians |
+| Clinical data capture (cases, measurements, follow-ups, structured feedback, files) | `/cases` | Veterinarians (cases are shared within a clinic) |
+| Knowledge & agent policy admin | `/admin/knowledge`, `/admin/agent-policy` | BioChange staff |
+| Clinical data dashboard (read-only, all clinics, CSV export) | `/dashboard` | BioChange staff |
+
+**Out of the MVP but kept intact:** inventory, ordering, adoption journey and education. They are switched off
+unless listed in `FEATURES` (e.g. `FEATURES=inventory,orders` or `FEATURES=all`). When off, their routes return 404, their agent
+tools are not offered to the model (and are refused if requested) and their server actions refuse to run.
+
+### Sign-in and security
+
+- **Veterinarians** sign in with a **one-time email link** (and optionally **Google**). Sign-in is **invite-only**: an identity is accepted
+  only for an existing, active user created under *Admin → Users & Clinics*. The link page needs a click on "Continue", so mail scanners
+  cannot use up the link. An account is bound to its identity-provider subject after first sign-in.
+- **BioChange staff** sign in with an email link or password, then a **TOTP authenticator code** (enrolled on first sign-in;
+  an admin can reset it, or `ADMIN_RESET_MFA=true npm run admin:bootstrap`). MFA secrets are encrypted with `AUTH_ENCRYPTION_KEY`.
+- Sessions are server-side (hashed opaque token, httpOnly cookie, `Secure` except on `http://localhost`), with an absolute lifetime and an
+  idle timeout (`SESSION_IDLE_MINUTES`, `STAFF_SESSION_IDLE_MINUTES`). "All devices" in the sidebar signs out everywhere.
+- Authorisation is enforced in the domain services from the session's `Actor`; staff can read all clinical data but never change a clinic's records.
+- Every page gets a per-request **CSP with a nonce** (`src/proxy.ts`), `frame-ancestors 'none'`, HSTS and related headers.
+- Uploads are identified by content (not name or MIME), size-limited, rate-limited, stored privately under random names, and
+  **images are re-encoded** (removes EXIF/GPS). Treatment files may be PDF, CSV, macro-free Excel (`.xlsx`) or text; non-images are only
+  ever served as downloads. Files are never sent to the AI, embeddings or analytics.
+- Text written by people or documents (knowledge passages, case records, memories) is passed to the model as a delimited data block,
+  not with developer authority. Closing a case from chat needs a button press, like recording an order.
+- Logs are structured JSON with redaction (no database parameters, tokens or clinical text); the audit log records which fields
+  changed, not their clinical values.
+- `GET /api/health` reports pass/fail for configuration and database (and, in staging/production, that no demo data is active).
+
+---
+
 ## Requirements
 
 - Node.js 20+ (22 recommended)
@@ -80,6 +117,12 @@ npm run dev                     # http://localhost:3000
 ```
 
 A quick local Postgres with pgvector: `docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres pgvector/pgvector:pg16`.
+
+### Signing in locally
+
+With `AUTH_PROVIDER=dev` and `EMAIL_DRIVER=log`, "Email me a sign-in link" prints the one-time link in the server log.
+Demo accounts also keep their password. Staff accounts ask for an authenticator code after signing in; for a quick local demo
+you can set `STAFF_MFA_REQUIRED=false` (never outside development). Generate `AUTH_ENCRYPTION_KEY` with `openssl rand -hex 32`.
 
 ### Demo accounts (seeded with `SEED_DEMO=true`; password = `DEMO_PASSWORD`)
 
@@ -113,7 +156,8 @@ ADMIN_EMAIL=you@biochange.life ADMIN_NAME="Your Name" ADMIN_PASSWORD='a-strong-p
 # Medical reviewer:  ADMIN_ROLE=biochange_medical …
 ```
 
-After that, under **Admin → Users & Clinics**, create clinics and accounts for vets and clinic admins.
+After that, under **Admin → Users & Clinics**, create clinics and invite veterinarians (no password needed: they receive an
+invitation and sign in with an email link). The first staff sign-in enrols an authenticator app.
 
 ### Knowledge workflow (Admin → Knowledge Sources)
 
@@ -122,6 +166,10 @@ After that, under **Admin → Users & Clinics**, create clinics and accounts for
 3. Review the authority level, product, version, market and effective dates, plus the **extracted text** itself.
 4. **Approve for agent**: the source is indexed into semantic chunks (procedure steps stay together, and warnings stay with the step they qualify) and embedded.
 5. **Revoke** at any time. Uploading a new file creates a new version that supersedes the old one when it is approved.
+6. Every source shows whether it is **used by the agent right now** and its index status (`indexed`, `keyword only`, `failed`, with the reason).
+   A failed or keyword-only index can be retried with **Re-index**. **Delete permanently** removes the passages, the record and the stored file.
+7. **Admin → Agent policy** sets the products in scope, allowed / disallowed topics, the out-of-scope reply and the BioChange escalation
+   contact. It is versioned and added after the built-in rules (it can narrow them, never loosen them). It never exposes the system prompt or keys.
 
 The critical-documents panel lists what is still missing (IFUs, regulatory documents, protocols, the claims matrix, training material, distributor information).
 **Public website material alone is not sufficient for a production clinical agent.**
@@ -137,10 +185,18 @@ The demo sources tagged `demo-mock` are built only from public product-page text
    - Copy the database connection string. For serverless, use the transaction pooler (port 6543), which is supported.
 2. Run migrations against Supabase: `DATABASE_URL=… npm run db:migrate`, then `npm run db:seed` (reference data only), then `admin:bootstrap`.
    - RLS is enabled on every table **with no policies**, and table privileges are revoked from `anon` and `authenticated`. Supabase's public REST API therefore exposes nothing. All access goes through the server.
-3. **Vercel**: import the repo and set these environment variables:
-   `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `STORAGE_DRIVER=supabase`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `APP_URL`.
-   Never prefix a secret with `NEXT_PUBLIC_`.
-4. Enable MFA on Vercel. Sessions are httpOnly, `Secure`, `SameSite=Lax` cookies with server-side expiry. Logins are rate-limited per email and per IP.
+3. **Supabase Auth** (identity verification only; the app keeps its own sessions and permissions):
+   - Authentication → URL configuration: Site URL = `APP_URL`; add `APP_URL/auth/confirm` and `APP_URL/auth/callback` to the redirect allow-list.
+   - Authentication → Email templates → **Magic link**: make the link point to the app's confirm page with the token hash:
+     `<a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=email">Sign in to BioChange</a>`
+   - Optional Google: Authentication → Providers → Google (OAuth client from Google Cloud), then set `AUTH_GOOGLE_ENABLED=true`.
+   - Configure custom SMTP for Supabase Auth emails and keep its rate limits.
+4. **Vercel**: import the repo and set these environment variables (separately per environment, never shared between staging and production):
+   `APP_ENV=production`, `APP_URL` (https), `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `STORAGE_DRIVER=supabase`, `SUPABASE_URL`,
+   `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `AUTH_PROVIDER=supabase`, `AUTH_ENCRYPTION_KEY`,
+   `EMAIL_DRIVER=resend`, `RESEND_API_KEY`, `EMAIL_FROM`, and `FEATURES` (empty for the MVP).
+   Never prefix a secret with `NEXT_PUBLIC_`. With `APP_ENV=staging|production` the app refuses to start with unsafe settings.
+5. Enable MFA on the Vercel and Supabase accounts. Point uptime monitoring at `/api/health`.
 
 ## Tests
 
@@ -152,8 +208,14 @@ npm run build
 
 `tests/acceptance.test.ts` automates the spec §38 loop end to end through `processMessage()` with a scripted model. Context building, tool execution, authorisation, persistence and auditing are all the real code.
 `tests/safety.test.ts` covers knowledge governance (pending, revoked and authority ranking), knowledge-gap logging, citation filtering, safe fallbacks, clinic isolation through tools, and the role boundaries.
+`tests/mvp.test.ts` covers the MVP hardening: untrusted text kept out of the developer message, audit/log redaction, feature flags,
+sign-in links (invite-only, one-time, expiry, identity binding), sessions (idle timeout, MFA gating), TOTP (RFC 6238, replay),
+knowledge index status and permanent deletion, the agent policy, structured feedback, upload validation (xlsx/macros/executables/size,
+EXIF removal), file deletion, and the dashboard (staff-only, cross-clinic, filters, CSV export without patient references).
 
 ### Manual acceptance test (with a real OpenAI key)
+
+Steps 4, 7 and 8 use inventory and ordering: run with `FEATURES=all`.
 
 1. Sign in as `vet@demo.biochange.test`. The **Today** page shows the upcoming follow-up for case P-1042.
 2. Ask: *"I have a 7mm pocket on 204 and I'm doing an open flap."* The answer cites `[S#]` chips, each with a View source link, and the agent offers to save the case.

@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { featureEnabled } from "@/lib/features";
 import { requireRole } from "@/lib/auth/session";
 import { actorFromSession } from "@/lib/authz";
 import { getOrderHistory } from "@/server/domain/orders";
@@ -17,6 +19,7 @@ const NEXT: Record<string, string[]> = {
 };
 
 export default async function OrdersPage() {
+  if (!featureEnabled("orders")) notFound();
   const user = await requireRole(["veterinarian", "clinic_admin"]);
   const actor = actorFromSession(user);
   const [orders, forecasts, products, clinic] = await Promise.all([getOrderHistory(actor, 100), estimateInventory(actor), listProducts(), getClinic(actor)]);

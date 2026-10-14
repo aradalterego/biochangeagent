@@ -53,9 +53,13 @@ export function toolOutput(input: Input, name: string): any { // eslint-disable-
   return out ? JSON.parse(out.output) : undefined;
 }
 
+/** Trusted runtime context (developer message) merged with the reference-data block (memories, active case, passages). */
 export function runtimeContext(input: Input): any { // eslint-disable-line @typescript-eslint/no-explicit-any
   const dev = input.find((x) => (x as { role?: string }).role === "developer") as { content: string };
-  return JSON.parse(dev.content.replace(/^<runtime_context>\n/, "").replace(/\n<\/runtime_context>$/, ""));
+  const trusted = JSON.parse(dev.content.replace(/^<runtime_context>\n/, "").replace(/\n<\/runtime_context>$/, ""));
+  const ref = input.find((x) => typeof (x as { content?: unknown }).content === "string" && (x as { content: string }).content.startsWith("<reference_data>")) as { content: string } | undefined;
+  const data = ref ? JSON.parse(/<reference_data>\n[^\n]*\n([\s\S]*)\n<\/reference_data>$/.exec(ref.content)![1]) : {};
+  return { ...trusted, ...data };
 }
 
 export const noExtraction = () => {};

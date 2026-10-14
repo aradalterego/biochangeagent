@@ -7,9 +7,12 @@ import { actorFromSession, assertClinicWrite, ValidationError } from "@/lib/auth
 import { runAction, str, num, type ActionState } from "@/lib/actions";
 import { sql } from "@/lib/db";
 import { audit } from "@/lib/audit";
-import { putFile } from "@/lib/storage";
+import { putFile, sanitizeFileName, type FileKind } from "@/lib/storage";
+import { enforce } from "@/lib/rateLimit";
+import { featureEnabled } from "@/lib/features";
+import { recordCaseFeedback, type FeedbackInput, type FeedbackPhase } from "@/server/domain/feedback";
 import {
-  addCaseNote, closeCase, completeFollowUp, createCase, getCaseRow, scheduleFollowUp, updateCase, type CaseInput, type CaseStatus,
+  addCaseNote, closeCase, completeFollowUp, createCase, deleteCaseFile, getCaseRow, scheduleFollowUp, updateCase, type CaseInput, type CaseStatus,
 } from "@/server/domain/cases";
 import { recordProductUsage } from "@/server/domain/inventory";
 
@@ -96,6 +99,7 @@ export async function completeFollowUpAction(caseId: string, followUpId: string,
 export async function recordUsageAction(caseId: string, _p: ActionState, fd: FormData): Promise<ActionState> {
   const user = await requireUser();
   const r = await runAction(async () => {
+    if (!featureEnabled("inventory")) throw new ValidationError("Usage tracking is not available.");
     const res = await recordProductUsage(actorFromSession(user), { productRef: str(fd, "product") ?? "", quantity: num(fd, "quantity") ?? 1, caseId }, { tool: "ui" });
     return `Recorded. Estimated stock: ${res.estimatedStock}.`;
   });
@@ -114,6 +118,15 @@ export async function closeCaseAction(caseId: string, _p: ActionState, fd: FormD
 }
 
 const MAX_CASE_FILE = 20 * 1024 * 1024;
+const FILE_TYPES = ["radiograph", "clinical_image", "document", "treatment_file", "other"] as const;
+/** Every upload is untrusted input: identified by content, size-limited, images re-encoded, stored privately under a random name. */
+const ALLOWED_KINDS: Record<(typeof FILE_TYPES)[number], FileKind[]> = {
+  radiograph: ["png", "jpeg", "webp", "dicom", "pdf"],
+  clinical_image: ["png", "jpeg", "webp"],
+  document: ["pdf", "text", "csv", "xlsx"],
+  treatment_file: ["pdf", "csv", "xlsx", "text"],
+  other: ["pdf", "png", "jpeg", "webp", "dicom", "text", "csv", "xlsx"],
+};
 
 export async function uploadCaseFileAction(caseId: string, _p: ActionState, fd: FormData): Promise<ActionState> {
   const user = await requireUser();
@@ -123,16 +136,48 @@ export async function uploadCaseFileAction(caseId: string, _p: ActionState, fd: 
     assertClinicWrite(actor, c.clinic_id);
     const file = fd.get("file");
     if (!(file instanceof File) || file.size === 0) throw new ValidationError("Choose a file.");
-    const fileType = str(fd, "file_type") ?? "other";
-    if (!["radiograph", "clinical_image", "document", "other"].includes(fileType)) throw new ValidationError("Invalid file type.");
-    const stored = await putFile("cases", Buffer.from(await file.arrayBuffer()), ["pdf", "png", "jpeg", "webp", "dicom"], MAX_CASE_FILE);
-    const name = file.name.replace(/[^\w.\- ]+/g, "_").slice(0, 120) || "file";
+    const fileType = (str(fd, "file_type") ?? "other") as (typeof FILE_TYPES)[number];
+    if (!FILE_TYPES.includes(fileType)) throw new ValidationError("Invalid file type.");
+    if (file.size > MAX_CASE_FILE) throw new ValidationError("File is too large (max 20 MB).");
+    await enforce(`upload:${user.id}`, 30, 3600, "Upload limit reached. Please try again later.");
+    const name = sanitizeFileName(file.name);
+    const stored = await putFile("cases", Buffer.from(await file.arrayBuffer()), ALLOWED_KINDS[fileType], MAX_CASE_FILE, { fileName: name, sanitizeImages: true });
+    const description = str(fd, "description")?.slice(0, 500) ?? null;
     const [row] = await sql<{ id: string }[]>`
-      INSERT INTO case_files (case_id, file_type, storage_path, file_name, mime_type, size_bytes, description, uploaded_by)
-      VALUES (${caseId}, ${fileType}, ${stored.storagePath}, ${name}, ${stored.mimeType}, ${stored.size}, ${str(fd, "description")}, ${user.id})
+      INSERT INTO case_files (case_id, file_type, storage_path, file_name, mime_type, size_bytes, description, uploaded_by, sha256)
+      VALUES (${caseId}, ${fileType}, ${stored.storagePath}, ${name}, ${stored.mimeType}, ${stored.size}, ${description}, ${user.id}, ${stored.sha256})
       RETURNING id`;
-    await audit(actor, { action: "case.upload_file", entityType: "case_file", entityId: row.id, tool: "ui", inputSummary: `${fileType}: ${name}` });
+    await sql`UPDATE cases SET updated_at = now() WHERE id = ${caseId}`;
+    await audit(actor, { action: "case.upload_file", entityType: "case_file", entityId: row.id, tool: "ui", inputSummary: `${fileType} (${stored.kind})` });
     return "File uploaded.";
+  });
+  revalidatePath(`/cases/${caseId}`);
+  return r;
+}
+
+export async function deleteCaseFileAction(caseId: string, fileId: string, _p: ActionState): Promise<ActionState> {
+  const user = await requireUser();
+  const r = await runAction(async () => {
+    await deleteCaseFile(actorFromSession(user), fileId);
+    return "File deleted.";
+  });
+  revalidatePath(`/cases/${caseId}`);
+  return r;
+}
+
+export async function recordFeedbackAction(caseId: string, _p: ActionState, fd: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const r = await runAction(async () => {
+    await recordCaseFeedback(actorFromSession(user), caseId, {
+      phase: (str(fd, "phase") as FeedbackPhase) ?? "treatment",
+      productRating: num(fd, "product_rating"),
+      easeOfUseRating: num(fd, "ease_of_use_rating"),
+      wouldUseAgain: str(fd, "would_use_again") as FeedbackInput["wouldUseAgain"],
+      productFeedback: str(fd, "product_feedback"),
+      usabilityFeedback: str(fd, "usability_feedback"),
+      handlingNotes: str(fd, "handling_notes"),
+    }, { tool: "ui", source: "ui" });
+    return "Feedback saved. Thank you.";
   });
   revalidatePath(`/cases/${caseId}`);
   return r;

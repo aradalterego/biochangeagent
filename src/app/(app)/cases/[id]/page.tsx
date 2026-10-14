@@ -5,8 +5,11 @@ import { actorFromSession, NotFoundError, AuthorizationError } from "@/lib/authz
 import { getCase } from "@/server/domain/cases";
 import { listProducts } from "@/server/domain/products";
 import {
-  addNoteAction, closeCaseAction, completeFollowUpAction, recordUsageAction, scheduleFollowUpAction, updateCaseAction, uploadCaseFileAction,
+  addNoteAction, closeCaseAction, completeFollowUpAction, deleteCaseFileAction, recordFeedbackAction, recordUsageAction, scheduleFollowUpAction,
+  updateCaseAction, uploadCaseFileAction,
 } from "@/app/actions/cases";
+import { featureEnabled } from "@/lib/features";
+import { FeedbackList } from "@/components/FeedbackList";
 import { ActionForm } from "@/components/ActionForm";
 import { CaseFields } from "@/components/CaseFields";
 import { Badge, Field, Page, PageHeader, Section, statusTone } from "@/components/ui";
@@ -23,7 +26,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
     throw e;
   }
   const products = await listProducts();
-  const { case: c, notes, followUps, measurements, files, conversations, usage } = data;
+  const { case: c, notes, followUps, measurements, files, conversations, usage, feedback } = data;
   const scheduled = followUps.filter((f) => f.status === "scheduled");
   const title = `${c.tooth ? `Tooth ${c.tooth}` : "Case"}${c.internal_patient_identifier ? ` · ${c.internal_patient_identifier}` : ""}`;
 
@@ -126,6 +129,37 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             </ActionForm>
           </Section>
 
+          <Section title="Product & ease-of-use feedback">
+            <FeedbackList feedback={feedback} timezone={user.timezone} />
+            <details className="mt-3" open={!feedback.length && ["treated", "followed_up", "follow_up_due"].includes(c.status)}>
+              <summary className="cursor-pointer text-sm text-brand">Add feedback</summary>
+              <ActionForm action={recordFeedbackAction.bind(null, c.id)} submitLabel="Save feedback" resetOnSuccess className="mt-3">
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <div>
+                    <label className="label">When</label>
+                    <select name="phase" className="input" defaultValue={c.status === "followed_up" ? "follow_up" : "treatment"}>
+                      <option value="treatment">At treatment</option><option value="follow_up">At follow-up</option><option value="general">General</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Product rating (1–5)</label>
+                    <select name="product_rating" className="input" defaultValue=""><option value="">—</option>{[1, 2, 3, 4, 5].map((n) => <option key={n}>{n}</option>)}</select>
+                  </div>
+                  <div>
+                    <label className="label">Ease of use (1–5)</label>
+                    <select name="ease_of_use_rating" className="input" defaultValue=""><option value="">—</option>{[1, 2, 3, 4, 5].map((n) => <option key={n}>{n}</option>)}</select>
+                  </div>
+                  <div>
+                    <label className="label">Would use again</label>
+                    <select name="would_use_again" className="input" defaultValue=""><option value="">—</option><option value="yes">Yes</option><option value="unsure">Unsure</option><option value="no">No</option></select>
+                  </div>
+                  <div className="sm:col-span-2"><label className="label">Product / result</label><textarea name="product_feedback" rows={2} maxLength={4000} className="input" /></div>
+                  <div className="sm:col-span-2"><label className="label">Ease of use (preparation, handling, placement)</label><textarea name="usability_feedback" rows={2} maxLength={4000} className="input" /></div>
+                </div>
+              </ActionForm>
+            </details>
+          </Section>
+
           <Section title="Edit case">
             <details>
               <summary className="cursor-pointer text-sm text-brand">Edit case details</summary>
@@ -140,7 +174,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
         </div>
 
         <div>
-          <Section title="Product usage">
+          {featureEnabled("inventory") && <Section title="Product usage">
             {usage.length ? (
               <ul className="mb-3 space-y-1 text-sm">
                 {usage.map((u, i) => <li key={i}>{u.quantity} × {u.product} <span className="text-muted">· {fmtDate(u.created_at)}</span></li>)}
@@ -157,16 +191,19 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
               </div>
             </ActionForm>
             <p className="mt-2 text-xs text-muted">Lowers the clinic&apos;s estimated stock.</p>
-          </Section>
+          </Section>}
 
           <Section title="Files">
             {files.length ? (
-              <ul className="mb-3 space-y-1 text-sm">
+              <ul className="mb-3 space-y-2 text-sm">
                 {files.map((f) => (
-                  <li key={f.id}>
-                    <a href={`/api/case-files/${f.id}`} target="_blank" className="text-brand hover:underline">{f.file_name}</a>
-                    <span className="text-xs text-muted"> · {f.file_type.replace("_", " ")}</span>
-                    {f.description && <div className="text-xs text-muted">{f.description}</div>}
+                  <li key={f.id} className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <a href={`/api/case-files/${f.id}`} target="_blank" className="break-all text-brand hover:underline">{f.file_name}</a>
+                      <span className="text-xs text-muted"> · {f.file_type.replace("_", " ")}</span>
+                      {f.description && <div className="text-xs text-muted">{f.description}</div>}
+                    </div>
+                    <ActionForm action={deleteCaseFileAction.bind(null, c.id, f.id)} submitLabel="Delete" submitClassName="text-xs text-danger hover:underline" confirm="Delete this file permanently?" />
                   </li>
                 ))}
               </ul>
@@ -175,17 +212,21 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             )}
             <ActionForm action={uploadCaseFileAction.bind(null, c.id)} submitLabel="Upload" submitClassName="btn-secondary" resetOnSuccess>
               <div className="space-y-2">
-                <input type="file" name="file" required accept=".pdf,.png,.jpg,.jpeg,.webp,.dcm" className="block w-full text-sm" />
+                <input type="file" name="file" required accept=".pdf,.png,.jpg,.jpeg,.webp,.dcm,.csv,.xlsx,.txt" className="block w-full text-sm" />
                 <select name="file_type" className="input">
-                  <option value="radiograph">Radiograph</option>
                   <option value="clinical_image">Clinical image</option>
+                  <option value="radiograph">Radiograph</option>
+                  <option value="treatment_file">Treatment file (from your practice system)</option>
                   <option value="document">Document</option>
                   <option value="other">Other</option>
                 </select>
-                <input name="description" placeholder="Description" className="input" />
+                <input name="description" maxLength={500} placeholder="Description (no client names)" className="input" />
               </div>
             </ActionForm>
-            <p className="mt-2 text-xs text-muted">Stored privately. Images are not interpreted automatically.</p>
+            <p className="mt-2 text-xs text-muted">
+              Before uploading a treatment file, remove the client&apos;s name, address and contact details. Accepted: PDF, CSV, Excel (.xlsx, no macros), text, JPEG/PNG/WebP, DICOM; max 20 MB.
+              Files are stored privately, never sent to the AI, and photo location data is removed.
+            </p>
           </Section>
 
           <Section title="Conversations">

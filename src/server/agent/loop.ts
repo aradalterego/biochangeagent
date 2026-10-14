@@ -3,7 +3,7 @@ import type OpenAI from "openai";
 import { env } from "@/lib/env";
 import { buildInstructions } from "./systemPrompt";
 import { executeTool, toolDeclarations, type TurnState } from "./tools";
-import type { HistoryMessage } from "./context";
+import type { TurnContext } from "./context";
 
 type ResponsesAPI = Pick<OpenAI["responses"], "create">;
 export interface LLMClient {
@@ -35,7 +35,7 @@ function isReasoningModel(model: string) {
  * authorises it against the server-side actor. Responses are not stored at OpenAI
  * (store: false); the application database is the canonical conversation archive.
  */
-export async function runAgent(client: LLMClient, state: TurnState, ctx: { contextBlock: string; history: HistoryMessage[] }): Promise<AgentRunResult> {
+export async function runAgent(client: LLMClient, state: TurnState, ctx: TurnContext, instructions: string = buildInstructions()): Promise<AgentRunResult> {
   const model = env().OPENAI_MODEL;
   const reasoning = isReasoningModel(model);
   const effort = env().OPENAI_REASONING_EFFORT;
@@ -48,6 +48,8 @@ export async function runAgent(client: LLMClient, state: TurnState, ctx: { conte
         : // Citation labels are numbered per turn; drop old ones so they can't be confused with this turn's.
           { role: m.role, content: m.role === "assistant" ? m.content.replace(/\s*\[S\d+(?:\s*,\s*S\d+)*\]/g, "") : m.content }) as InputItem,
     ),
+    // Untrusted reference data sits just before the user's message, clearly delimited, with no developer authority.
+    ...(ctx.referenceBlock ? [{ role: "user", content: ctx.referenceBlock } as InputItem] : []),
     { role: "user", content: state.userText },
   ];
   const tools = toolDeclarations();
@@ -59,7 +61,7 @@ export async function runAgent(client: LLMClient, state: TurnState, ctx: { conte
     if (remaining < 5_000) throw new Error("Agent turn exceeded its time budget");
     const res = await client.responses.create({
       model,
-      instructions: buildInstructions(),
+      instructions,
       input,
       tools,
       tool_choice: finalRound ? "none" : "auto",

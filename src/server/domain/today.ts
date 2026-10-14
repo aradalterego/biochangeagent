@@ -6,6 +6,7 @@ import type { Actor } from "@/lib/authz";
 import { followUpsForClinic } from "./cases";
 import { estimateInventory } from "./inventory";
 import { getAdoptionState } from "./adoption";
+import { featureEnabled } from "@/lib/features";
 
 export interface TodayCard {
   kind: "follow_up_overdue" | "follow_up_today" | "follow_up_upcoming" | "inventory_low" | "draft_order" | "support_answer" | "first_use" | "training";
@@ -34,7 +35,7 @@ export async function getTodayCards(actor: Actor, timezone = "UTC"): Promise<Tod
       else if (daysAhead <= 7) cards.push({ kind: "follow_up_upcoming", title: "Upcoming follow-up", detail: `${label} — ${due}`, href: `/cases/${f.case_id}`, priority: 5 });
     }
 
-    for (const s of await estimateInventory(actor)) {
+    for (const s of featureEnabled("inventory") ? await estimateInventory(actor) : []) {
       if (s.likelyLow) {
         cards.push({
           kind: "inventory_low",
@@ -46,15 +47,15 @@ export async function getTodayCards(actor: Actor, timezone = "UTC"): Promise<Tod
       }
     }
 
-    const drafts = await sql<{ id: string; quantity: number; name: string }[]>`
+    const drafts = !featureEnabled("orders") ? [] : await sql<{ id: string; quantity: number; name: string }[]>`
       SELECT o.id, o.quantity, p.name FROM orders o JOIN products p ON p.id = o.product_id
       WHERE o.clinic_id = ${actor.clinicId} AND o.status = 'draft' ORDER BY o.created_at DESC LIMIT 3`;
     for (const d of drafts) {
       cards.push({ kind: "draft_order", title: "Draft order waiting for confirmation", detail: `${d.quantity} package(s) of ${d.name}`, href: "/orders", priority: 4 });
     }
 
-    const adoption = await getAdoptionState(actor.userId);
-    if (adoption.state === "first_use_pending") {
+    const adoption = featureEnabled("adoption") ? await getAdoptionState(actor.userId) : null;
+    if (adoption?.state === "first_use_pending") {
       cards.push({ kind: "first_use", title: "Planning your first case?", detail: "Ask the companion for the approved protocol, or save the case so follow-up is tracked.", href: "/chat?prompt=first-case", priority: 6 });
     }
   }
@@ -66,7 +67,7 @@ export async function getTodayCards(actor: Actor, timezone = "UTC"): Promise<Tod
     cards.push({ kind: "support_answer", title: "Medical Support answered your question", detail: a.question.slice(0, 140), href: `/support/${a.id}`, priority: 2 });
   }
 
-  const [training] = await sql<{ id: string; title: string }[]>`
+  const [training] = !featureEnabled("education") ? [] : await sql<{ id: string; title: string }[]>`
     SELECT r.id, r.title FROM education_activity a JOIN education_resources r ON r.id = a.resource_id
     WHERE a.user_id = ${actor.userId} AND r.counts_as_training AND r.active
       AND NOT EXISTS (SELECT 1 FROM education_activity b WHERE b.user_id = a.user_id AND b.resource_id = a.resource_id AND b.completed)
