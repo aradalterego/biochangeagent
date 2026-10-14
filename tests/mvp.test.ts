@@ -19,6 +19,8 @@ import { addCaseNote, createCase, deleteCaseFile, getCase, updateCase } from "@/
 import { recordCaseFeedback } from "@/server/domain/feedback";
 import { normalizeQuestion } from "@/server/domain/escalations";
 import { savePolicy } from "@/server/domain/agentPolicy";
+import { buildInstructions } from "@/server/agent/systemPrompt";
+import { applyExtraction } from "@/server/agent/extraction";
 import { csvCell, exportCasesCsv, listDashboardCases, listDashboardVets } from "@/server/domain/dashboard";
 import { searchKnowledge } from "@/server/knowledge/retrieve";
 import { agentAvailability, approveSource, createSource, deleteSource, getSource, revokeSource } from "@/server/knowledge/sources";
@@ -322,6 +324,30 @@ describe("knowledge management", () => {
     expect(instructions).toContain("vets@biochange.example");
     expect(instructions).toContain("Pricing and discounts");
     expect(instructions.indexOf("OPERATING RULES")).toBeLessThan(instructions.indexOf("BIOCHANGE AGENT POLICY"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("scope", () => {
+  it("always tells the agent to decline anything that is not BioChange service", () => {
+    const i = buildInstructions();
+    expect(i).toContain("Scope (always applies)");
+    expect(i).toMatch(/only provide BioChange service/);
+    expect(i).toMatch(/recipes/);
+    expect(i).toMatch(/not even partially/);
+  });
+
+  it("does not record declined out-of-scope requests as knowledge gaps", async () => {
+    const client = scriptedClient([() => ({ text: "I'm the BioChange Vet Companion, so I can only help with BioChange products and related veterinary cases." })]);
+    const question = "Can you give me a chocolate cake recipe with walnuts?";
+    const msg = await processMessage({ actor: vet, channel: "web", content: question }, { client, runExtraction: noExtraction });
+    const state = newTurnState({ actor: vet, conversationId: msg.conversationId, userMessageId: null as unknown as string, userText: question, activeCaseId: null });
+    await applyExtraction(
+      { actor: vet, conversationId: msg.conversationId, userMessageId: null as unknown as string, assistantMessageId: msg.id, userText: question, state },
+      { classification: { primary_intent: "out_of_scope", answer_level: "out_of_scope" }, facts: [{ type: "unanswered_question", memory_type: null, statement: "cake recipe", confidence: 0.9 }] },
+    );
+    expect(await sql`SELECT 1 FROM knowledge_gaps WHERE question ILIKE '%cake recipe%'`).toHaveLength(0);
+    expect(msg.sources).toHaveLength(0);
   });
 });
 

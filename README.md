@@ -91,6 +91,11 @@ tools are not offered to the model (and are refused if requested) and their serv
 - Uploads are identified by content (not name or MIME), size-limited, rate-limited, stored privately under random names, and
   **images are re-encoded** (removes EXIF/GPS). Treatment files may be PDF, CSV, macro-free Excel (`.xlsx`) or text; non-images are only
   ever served as downloads. Files are never sent to the AI, embeddings or analytics.
+- **Scope:** the agent only provides BioChange service (BioChange products, their veterinary dental use and evidence, the vet's cases,
+  follow-ups and feedback, Medical Support). Anything else (a cake recipe, sport, coding, human medicine, other companies' products…)
+  is declined in one or two sentences with no tools called and no knowledge gap logged; mixed messages get only the in-scope part
+  answered. This rule is built in; *Agent policy* can narrow it further and set the exact out-of-scope wording.
+  `npm run eval:scope` checks this against the real model (needs `OPENAI_API_KEY` and the demo seed).
 - Text written by people or documents (knowledge passages, case records, memories) is passed to the model as a delimited data block,
   not with developer authority. Closing a case from chat needs a button press, like recording an order.
 - Logs are structured JSON with redaction (no database parameters, tokens or clinical text); the audit log records which fields
@@ -237,6 +242,7 @@ Steps 4, 7 and 8 use inventory and ordering: run with `FEATURES=all`.
 | `admin:bootstrap` | Create or reset a BioChange admin |
 | `kb:ingest-website` | Fetch and parse registered URL sources (they stay pending review) |
 | `kb:reindex` | Rebuild chunks and embeddings for approved sources |
+| `eval:scope` | Check against the real model that unrelated requests are declined and BioChange questions answered |
 
 ## V1 limitations (by design)
 

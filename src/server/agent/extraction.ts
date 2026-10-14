@@ -10,7 +10,7 @@ import type { TurnState } from "./tools";
 
 export const INTENTS = [
   "general_question", "product_information", "product_comparison", "clinical_case", "product_selection", "procedure_guidance",
-  "troubleshooting", "scientific_evidence", "case_followup", "training", "inventory", "order", "reorder", "support", "account", "feedback",
+  "troubleshooting", "scientific_evidence", "case_followup", "training", "inventory", "order", "reorder", "support", "account", "feedback", "out_of_scope",
 ] as const;
 
 const FACT_TYPES = ["user_fact", "case_fact", "product_usage", "inventory_statement", "order_intent", "follow_up_request", "training_completion", "unanswered_question"] as const;
@@ -23,7 +23,7 @@ const SCHEMA = obj({
     commercial_context: enumOf(["none", "inventory", "order", "pricing"]),
     urgency: enumOf(["routine", "soon", "in_procedure"]),
     risk_level: enumOf(["low", "medium", "high"]),
-    answer_level: enumOf(["not_clinical", "known_approved", "clinical_interpretation", "unknown"]),
+    answer_level: enumOf(["not_clinical", "known_approved", "clinical_interpretation", "unknown", "out_of_scope"]),
   }),
   facts: arr(obj({
     type: enumOf(FACT_TYPES),
@@ -36,12 +36,13 @@ const SCHEMA = obj({
 const PROMPT = `You analyse one exchange between a veterinarian and the BioChange Vet Companion (an AI product/clinical companion).
 Return:
 1. classification of the USER message (intent, context, urgency, risk) and the level of the ASSISTANT answer:
-   known_approved (answered from cited approved sources), clinical_interpretation (approved info + vet judgement), unknown (assistant said it lacks approved information), not_clinical.
+   known_approved (answered from cited approved sources), clinical_interpretation (approved info + vet judgement), unknown (assistant said it lacks approved information about an in-scope BioChange question), out_of_scope (the request was unrelated to BioChange products or veterinary cases and the assistant declined), not_clinical.
+   Use primary_intent out_of_scope for requests unrelated to BioChange (e.g. recipes, general trivia).
 2. facts: durable, explicitly stated information worth keeping. Only include what the USER explicitly said (never infer).
    - user_fact: preferences, experience, workflow, usual order size (set memory_type).
    - training_completion: the user says they completed a training.
    - case_fact / product_usage / inventory_statement / order_intent / follow_up_request: state them, they will be reviewed, not applied silently.
-   - unanswered_question: only if the assistant could not answer a professional question.
+   - unanswered_question: only if the assistant could not answer a professional BioChange question (never for out-of-scope requests).
 Do not include clinical case details as user_fact. Return an empty list when nothing qualifies.`;
 
 /**
@@ -79,12 +80,15 @@ export async function applyExtraction(
 ) {
   await sql`UPDATE messages SET metadata = metadata || ${sql.json({ classification: parsed.classification } as never)} WHERE id = ${args.assistantMessageId}`;
 
+  // Declined out-of-scope requests (recipes, trivia…) are not knowledge gaps.
+  const outOfScope = parsed.classification.answer_level === "out_of_scope" || parsed.classification.primary_intent === "out_of_scope";
+
   for (const f of parsed.facts.slice(0, 10)) {
     let status: "pending" | "applied" = "pending";
     if (f.type === "user_fact" && f.memory_type && f.confidence >= 0.85) {
       await saveMemory(args.actor, { memoryType: f.memory_type, content: f.statement, confidence: f.confidence, source: `extraction:${args.userMessageId}` }, { tool: "extraction", sourceMessageId: args.userMessageId });
       status = "applied";
-    } else if (f.type === "unanswered_question" && !args.state.gapLogged) {
+    } else if (f.type === "unanswered_question" && !args.state.gapLogged && !outOfScope) {
       await logKnowledgeGap({ question: args.userText, sourcesSearched: args.state.knowledgeSearches, reason: f.statement, userId: args.actor.userId, conversationId: args.conversationId });
       args.state.gapLogged = true;
       status = "applied";
@@ -94,7 +98,7 @@ export async function applyExtraction(
                       ${sql.json({ statement: f.statement, memory_type: f.memory_type } as never)}, ${Math.min(1, Math.max(0, f.confidence))}, ${status})`;
   }
 
-  if (parsed.classification.answer_level === "unknown" && !args.state.gapLogged) {
+  if (parsed.classification.answer_level === "unknown" && !args.state.gapLogged && !outOfScope) {
     await logKnowledgeGap({ question: args.userText, sourcesSearched: args.state.knowledgeSearches, reason: "Assistant answered at UNKNOWN level", userId: args.actor.userId, conversationId: args.conversationId });
   }
 }
