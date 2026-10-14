@@ -35,6 +35,8 @@ const schema = z
     EMAIL_DRIVER: z.enum(["resend", "log", "none"]).default("log"),
     RESEND_API_KEY: z.string().optional(),
     EMAIL_FROM: z.string().default("BioChange <no-reply@biochange.life>"),
+    /** Shared secret for scheduled jobs (Vercel Cron sends it as "Authorization: Bearer <secret>"). */
+    CRON_SECRET: z.string().optional(),
   })
   .superRefine((e, ctx) => {
     if (e.APP_ENV !== "production" && e.APP_ENV !== "staging") return;
@@ -47,6 +49,7 @@ const schema = z
     need(e.STORAGE_DRIVER === "supabase", "STORAGE_DRIVER", "must be 'supabase' outside development");
     need(e.EMAIL_DRIVER === "resend" && Boolean(e.RESEND_API_KEY), "EMAIL_DRIVER", "must be 'resend' with RESEND_API_KEY outside development");
     need(e.APP_URL.startsWith("https://"), "APP_URL", "must be https outside development");
+    need((e.CRON_SECRET?.length ?? 0) >= 32, "CRON_SECRET", "is required (at least 32 characters) outside development");
   });
 
 export type Env = z.infer<typeof schema>;

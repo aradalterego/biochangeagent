@@ -6,6 +6,7 @@ import { sql } from "@/lib/db";
 import { getCase } from "@/server/domain/cases";
 import { Badge, Field, Page, PageHeader, Section, statusTone } from "@/components/ui";
 import { FeedbackList } from "@/components/FeedbackList";
+import { FollowUpMeta } from "@/components/FollowUpMeta";
 import { fmtDate, fmtDateTime } from "@/lib/format";
 
 /** Read-only case view for BioChange staff (no edit forms; writes are refused server-side anyway). */
@@ -71,7 +72,7 @@ export default async function DashboardCasePage({ params }: { params: Promise<{ 
             {followUps.length ? (
               <ul className="space-y-2 text-sm">
                 {followUps.map((f) => (
-                  <li key={f.id} className="flex items-center justify-between"><span>{fmtDate(f.due_at)}{f.reason ? <span className="text-muted"> · {f.reason}</span> : null}</span><Badge tone={statusTone(f.status)}>{f.status}</Badge></li>
+                  <li key={f.id} className="flex items-center justify-between"><span>{fmtDate(f.due_at)}{f.reason ? <span className="text-muted"> · {f.reason}</span> : null}<FollowUpMeta f={f} /></span><Badge tone={statusTone(f.status)}>{f.status}</Badge></li>
                 ))}
               </ul>
             ) : <p className="text-sm text-muted">No follow-up scheduled.</p>}

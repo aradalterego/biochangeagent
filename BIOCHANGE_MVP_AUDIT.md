@@ -720,8 +720,25 @@ WordPress (Q4) יטופל בנפרד.
 - שליחת מייל דרך Resend.
 - ה-prompt injection נבדק מבנית (מה נשלח למודל). Eval מול מודל אמיתי עדיין חסר.
 
+## 17. סבב 2: מעקבים ותזכורות (Phase 9)
+
+| מה | איפה |
+|---|---|
+| מעקב ברירת מחדל: תאריך טיפול + 90 יום, זז עם תאריך הטיפול, לא נוצר אם הווטרינר תזמן בעצמו | `followUpReminders.ts` (`ensureDefaultFollowUp`), `cases.ts` |
+| תקופה, תזכורת איחור והפעלה/כיבוי ניתנים לשינוי ע"י BioChange Admin (עם audit) | `app_settings`, `/admin/follow-ups` |
+| Cron יומי מאובטח ב-`CRON_SECRET` | `/api/cron/follow-ups`, `vercel.json`, `npm run jobs:follow-ups` |
+| Outbox עם `dedupe_key` ייחודי | `notification_outbox` |
+| ניסיון חוזר לכישלונות, שעתי, עד 5 פעמים, וגלוי ב-Admin | — |
+| סטטוס תזכורת על כל מעקב (pending, sent, failed, skipped, not_required) | מוצג ב-Case וב-Dashboard |
+| מייל ללא ממצאים קליניים, עם קישור ל-Case | — |
+
+**הערות:**
+- **Migration:** `0005_follow_up_reminders.sql`, expand-only.
+- **בדיקות:** 67 טסטים עוברים, מתוכם 10 חדשים ב-`tests/followups.test.ts`.
+- **לא נכלל:** Cases שטופלו לפני השינוי לא מקבלים מעקב אוטומטי רטרואקטיבית. הם מסומנים "missing" ב-Dashboard.
+
 **פתוח לסבבים הבאים:**
-- תכנית העבודה מסעיף 12: שלב 3 (data model, כולל `app_settings`), שלב 6 (סוכן באתר), שלב 9 (מעקבים ותזכורות) ושלב 10 (WordPress).
+- תכנית העבודה מסעיף 12: שלב 6 (סוכן באתר) ושלב 10 (WordPress).
 - Least-privilege DB role (M15), malware scanning (F17), CI (F15), retention policies (F18).
 
 </div>

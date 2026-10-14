@@ -5,6 +5,7 @@ import { assertClinicRead, assertClinicWrite, NotFoundError, requireClinic, Vali
 import { resolveProduct } from "./products";
 import { recomputeAdoption } from "./adoption";
 import type { FeedbackRow } from "./feedback";
+import { ensureDefaultFollowUp } from "./followUpReminders";
 import { deleteFile } from "@/lib/storage";
 import { log } from "@/lib/log";
 
@@ -147,6 +148,7 @@ export async function createCase(actor: Actor, input: CaseInput, ctx: OpContext 
     if (input.followUpDate) {
       await tx`INSERT INTO follow_ups (case_id, due_at, reason, created_by) VALUES (${row.id}, ${input.followUpDate}, 'Post-treatment follow-up', ${actor.userId})`;
     }
+    await ensureDefaultFollowUp(tx, row.id, actor.userId);
     if (ctx.conversationId) {
       await tx`INSERT INTO case_conversations (case_id, conversation_id) VALUES (${row.id}, ${ctx.conversationId}) ON CONFLICT DO NOTHING`;
       await tx`UPDATE conversations SET active_case_id = ${row.id} WHERE id = ${ctx.conversationId} AND user_id = ${actor.userId}`;
@@ -186,6 +188,7 @@ export async function updateCase(actor: Actor, id: string, input: CaseInput, ctx
     }
     if (Object.keys(set).length) await tx`UPDATE cases SET ${tx(set)}, updated_at = now() WHERE id = ${id}`;
     await tx`UPDATE cases SET follow_up_date = (SELECT min(due_at) FROM follow_ups WHERE case_id = ${id} AND status = 'scheduled'), updated_at = now() WHERE id = ${id}`;
+    if (set.treatment_date !== undefined) await ensureDefaultFollowUp(tx, id, actor.userId);
     // Baseline pocket depth recorded for the first time becomes a baseline measurement.
     if (input.pocketDepthMm != null && existing.pocket_depth_mm == null) {
       await tx`INSERT INTO case_measurements (case_id, kind, measured_at, tooth, pocket_depth_mm, recorded_by)
@@ -202,7 +205,7 @@ export async function closeCase(actor: Actor, id: string, outcomeNotes: string |
   assertClinicWrite(actor, existing.clinic_id);
   await sql.begin(async (tx) => {
     await tx`UPDATE cases SET status = 'closed', outcome_notes = coalesce(${outcomeNotes}, outcome_notes), follow_up_date = NULL, updated_at = now() WHERE id = ${id}`;
-    await tx`UPDATE follow_ups SET status = 'cancelled' WHERE case_id = ${id} AND status = 'scheduled'`;
+    await tx`UPDATE follow_ups SET status = 'cancelled', reminder_status = 'not_required' WHERE case_id = ${id} AND status = 'scheduled'`;
     await audit(actor, { action: "case.close", entityType: "case", entityId: id, tool: ctx.tool, sourceMessageId: ctx.sourceMessageId, inputSummary: outcomeNotes ? "with outcome notes" : null }, tx);
   });
   return getCaseRow(actor, id);
@@ -254,7 +257,8 @@ export async function completeFollowUp(actor: Actor, followUpId: string, result:
   if (f.status !== "scheduled") throw new ValidationError(`This follow-up is already ${f.status}.`);
   if (result.pocketDepthMm != null && (result.pocketDepthMm < 0 || result.pocketDepthMm > 30)) throw new ValidationError("Pocket depth must be between 0 and 30 mm.");
   await sql.begin(async (tx) => {
-    await tx`UPDATE follow_ups SET status = 'completed', completed_at = now(), notes = ${result.notes ?? null} WHERE id = ${followUpId}`;
+    await tx`UPDATE follow_ups SET status = 'completed', completed_at = now(), notes = ${result.notes ?? null},
+             reminder_status = CASE WHEN reminder_status = 'sent' THEN 'sent' ELSE 'not_required' END WHERE id = ${followUpId}`;
     await tx`INSERT INTO case_measurements (case_id, kind, follow_up_id, tooth, pocket_depth_mm, attachment_level_mm, mobility, furcation, notes, recorded_by)
              VALUES (${f.case_id}, 'follow_up', ${followUpId}, ${c.tooth}, ${result.pocketDepthMm ?? null}, ${result.attachmentLevelMm ?? null},
                      ${result.mobility ?? null}, ${result.furcation ?? null}, ${result.notes ?? null}, ${actor.userId})`;

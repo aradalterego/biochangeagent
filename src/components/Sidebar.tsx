@@ -42,6 +42,7 @@ export function Sidebar({ user, conversations }: { user: SessionUser; conversati
             <div className="mt-5 mb-1 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted">Admin</div>
             <NavLink href="/admin/knowledge">Knowledge Sources</NavLink>
             <NavLink href="/admin/agent-policy">Agent policy</NavLink>
+            <NavLink href="/admin/follow-ups">Follow-up reminders</NavLink>
             <NavLink href="/admin/claims">Approved Claims</NavLink>
             <NavLink href="/admin/gaps">Knowledge Gaps</NavLink>
             <NavLink href="/admin/escalations">Escalations</NavLink>

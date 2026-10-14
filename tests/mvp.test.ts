@@ -442,7 +442,9 @@ describe("BioChange clinical dashboard", () => {
     await expect(listDashboardVets(vet)).rejects.toBeInstanceOf(AuthorizationError);
     await expect(exportCasesCsv(vet, {})).rejects.toBeInstanceOf(AuthorizationError);
 
-    // Treated, no follow-up scheduled → flagged as missing.
+    // Treated cases get an automatic follow-up; one treated before that (or whose follow-up was
+    // cancelled) has none and is flagged as missing.
+    await sql`DELETE FROM follow_ups WHERE case_id = ${mine.id}`;
     const missing = await listDashboardCases(admin, { followUp: "missing", clinicId: outsider.clinicId });
     expect(missing.rows.map((r) => r.id)).toContain(mine.id);
     const byVet = await listDashboardCases(admin, { vetId: outsider.userId });

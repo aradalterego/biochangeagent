@@ -10,6 +10,7 @@ import {
 } from "@/app/actions/cases";
 import { featureEnabled } from "@/lib/features";
 import { FeedbackList } from "@/components/FeedbackList";
+import { FollowUpMeta } from "@/components/FollowUpMeta";
 import { ActionForm } from "@/components/ActionForm";
 import { CaseFields } from "@/components/CaseFields";
 import { Badge, Field, Page, PageHeader, Section, statusTone } from "@/components/ui";
@@ -83,7 +84,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
                 {followUps.map((f) => (
                   <li key={f.id} className="rounded-lg border border-line p-3">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium">{fmtDate(f.due_at)} {f.reason ? <span className="font-normal text-muted">· {f.reason}</span> : null}</span>
+                      <span className="font-medium">{fmtDate(f.due_at)} {f.reason ? <span className="font-normal text-muted">· {f.reason}</span> : null}<FollowUpMeta f={f} /></span>
                       <Badge tone={statusTone(f.status)}>{f.status}</Badge>
                     </div>
                     {f.status === "scheduled" && (
@@ -112,7 +113,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
                 <div className="sm:col-span-2"><label className="label">Reason</label><input name="reason" className="input" placeholder="e.g. 3-month recheck" /></div>
               </div>
             </ActionForm>
-            {!scheduled.length && c.status !== "closed" && <p className="mt-2 text-xs text-muted">No follow-up scheduled.</p>}
+            {!scheduled.length && c.status !== "closed" && <p className="mt-2 text-xs text-muted">No follow-up scheduled.{!c.treatment_date && " A follow-up is scheduled automatically once a treatment date is set."}</p>}
           </Section>
 
           <Section title="Notes">

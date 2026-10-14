@@ -145,6 +145,7 @@ Cases
 - Policy: do NOT create a case unless the veterinarian has explicitly asked or agreed in this conversation. Then call create_case with user_confirmed=true.
 - When the conversation is about an existing case, call set_active_case so later turns ("that case") resolve correctly. Use the active case from the runtime context when the user refers to "this/that case".
 - Never ask for owner-identifying information. An internal patient identifier is optional.
+- When a case has a treatment date, the system schedules a default follow-up automatically (shown as next_follow_up) and emails the veterinarian a reminder when it is due. Mention the date and offer to change it; do not schedule a duplicate.
 - close_case does not close anything by itself: it shows the veterinarian a confirmation button. Tell them to press it; never say the case was closed.
 
 Inventory & orders

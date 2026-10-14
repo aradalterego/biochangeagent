@@ -77,6 +77,16 @@ The MVP has four interfaces on one backend, one database, one session/authorisat
 unless listed in `FEATURES` (e.g. `FEATURES=inventory,orders` or `FEATURES=all`). When off, their routes return 404, their agent
 tools are not offered to the model (and are refused if requested) and their server actions refuse to run.
 
+### Follow-ups and reminders
+
+- When a case gets a treatment date, a **default follow-up** is scheduled at treatment date + 90 days (it moves if the treatment date
+  changes). A follow-up the veterinarian schedules themselves replaces it. Completing a follow-up records a separate measurement.
+- A daily job (`vercel.json` → `GET /api/cron/follow-ups`, protected by `CRON_SECRET`; or `npm run jobs:follow-ups`) emails the
+  treating veterinarian when a follow-up is due, and once more when it is overdue. Every email goes through `notification_outbox`
+  with a unique key, so a reminder is never sent twice; failed sends are retried hourly (up to 5 times). Emails contain no clinical findings.
+- **Admin → Follow-up reminders**: the period (days), the overdue reminder, an on/off switch, counts and the recent emails with failures.
+  A changed period applies to follow-ups created or moved afterwards.
+
 ### Sign-in and security
 
 - **Veterinarians** sign in with a **one-time email link** (and optionally **Google**). Sign-in is **invite-only**: an identity is accepted
@@ -199,7 +209,8 @@ The demo sources tagged `demo-mock` are built only from public product-page text
 4. **Vercel**: import the repo and set these environment variables (separately per environment, never shared between staging and production):
    `APP_ENV=production`, `APP_URL` (https), `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `STORAGE_DRIVER=supabase`, `SUPABASE_URL`,
    `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `AUTH_PROVIDER=supabase`, `AUTH_ENCRYPTION_KEY`,
-   `EMAIL_DRIVER=resend`, `RESEND_API_KEY`, `EMAIL_FROM`, and `FEATURES` (empty for the MVP).
+   `EMAIL_DRIVER=resend`, `RESEND_API_KEY`, `EMAIL_FROM`, `CRON_SECRET`, and `FEATURES` (empty for the MVP).
+   `vercel.json` schedules the daily reminder job (06:00 UTC).
    Never prefix a secret with `NEXT_PUBLIC_`. With `APP_ENV=staging|production` the app refuses to start with unsafe settings.
 5. Enable MFA on the Vercel and Supabase accounts. Point uptime monitoring at `/api/health`.
 
@@ -242,6 +253,7 @@ Steps 4, 7 and 8 use inventory and ordering: run with `FEATURES=all`.
 | `admin:bootstrap` | Create or reset a BioChange admin |
 | `kb:ingest-website` | Fetch and parse registered URL sources (they stay pending review) |
 | `kb:reindex` | Rebuild chunks and embeddings for approved sources |
+| `jobs:follow-ups` | Run the follow-up reminder job once (normally Vercel Cron runs it daily) |
 | `eval:scope` | Check against the real model that unrelated requests are declined and BioChange questions answered |
 
 ## V1 limitations (by design)

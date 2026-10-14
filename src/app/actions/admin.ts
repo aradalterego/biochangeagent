@@ -15,6 +15,7 @@ import { sendEmail } from "@/lib/email";
 import { log } from "@/lib/log";
 import { approveSource, createSource, deleteSource, reindexSource, reparseSource, revokeSource, updateSource, upsertStudy, type IndexResult, type SourceInput } from "@/server/knowledge/sources";
 import { savePolicy } from "@/server/domain/agentPolicy";
+import { saveFollowUpSettings } from "@/server/domain/followUpReminders";
 import { SOURCE_TYPES, type SourceType } from "@/server/knowledge/constants";
 import { saveClaim } from "@/server/knowledge/claims";
 import { convertToKnowledge, setEscalationStatus, type EscalationStatus } from "@/server/domain/escalations";
@@ -363,4 +364,18 @@ function validTimeZone(tz: string | null): string {
   if (!tz) return "UTC";
   if (safeTimeZone(tz) !== tz) throw new ValidationError(`Unknown timezone "${tz}". Use an IANA name such as Europe/London.`);
   return tz;
+}
+
+export async function saveFollowUpSettingsAction(_p: ActionState, fd: FormData): Promise<ActionState> {
+  const actor = await staff();
+  const r = await runAction(async () => {
+    await saveFollowUpSettings(actor, {
+      defaultDays: num(fd, "default_days") ?? NaN,
+      overdueReminderDays: num(fd, "overdue_reminder_days") ?? NaN,
+      remindersEnabled: fd.get("reminders_enabled") === "on",
+    });
+    return "Saved. New and moved follow-ups use the new period; existing dates are kept.";
+  });
+  revalidatePath("/admin/follow-ups");
+  return r;
 }
