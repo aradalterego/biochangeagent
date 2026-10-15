@@ -1,4 +1,4 @@
-import { AUTHORITY_LEVELS, DEFAULT_AUTHORITY, SOURCE_TYPES, SOURCE_TYPE_LABELS } from "@/server/knowledge/constants";
+import { AUTHORITY_LEVELS, DEFAULT_AUTHORITY, PRODUCT_FAMILIES, SOURCE_TYPES, SOURCE_TYPE_LABELS } from "@/server/knowledge/constants";
 import type { SourceRow } from "@/server/knowledge/sources";
 import { isoDate } from "@/lib/format";
 
@@ -23,7 +23,7 @@ export function SourceFields({ s, others }: { s?: SourceRow; others?: { id: stri
       <div>
         <label className="label">Product</label>
         <select name="product" defaultValue={s?.product ?? ""} className="input">
-          <option value="">General / all</option><option>ReGum Vet</option><option>MicroFoam</option>
+          <option value="">General / all</option>{PRODUCT_FAMILIES.map((p) => <option key={p}>{p}</option>)}
         </select>
       </div>
       <div className="sm:col-span-2"><label className="label">Source URL</label><input name="source_url" type="url" defaultValue={s?.source_url ?? ""} className="input" /></div>

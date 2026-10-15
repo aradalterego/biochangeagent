@@ -1,0 +1,13 @@
+{
+  "$comment": "Approved BioChange knowledge files. `npm run kb:import` loads each file as a knowledge source in PENDING REVIEW; an admin approves it in Admin → Knowledge Sources before the agent can use it. Text was transcribed from the official IFU leaflets (English and Hebrew panels only).",
+  "sources": [
+    { "file": "regum-vet-ifu-en.md", "title": "ReGum Vet — Instructions for Use (English)", "sourceType": "ifu", "product": "ReGum Vet", "version": "LB70 E Rev.06", "language": "en", "originalPdf": "6_REGUM.pdf" },
+    { "file": "regum-vet-ifu-he.md", "title": "ReGum Vet — הוראות שימוש (עברית)", "sourceType": "ifu", "product": "ReGum Vet", "version": "LB70 H Rev.06", "language": "he", "originalPdf": "6_REGUM.pdf" },
+    { "file": "microfoam-ifu-en.md", "title": "MicroFoam — Instructions for Use (English)", "sourceType": "ifu", "product": "MicroFoam", "version": "LB132 E Rev01", "language": "en", "originalPdf": "6_MICROFOAM.pdf" },
+    { "file": "microfoam-ifu-he.md", "title": "MicroFoam — הוראות שימוש (עברית)", "sourceType": "ifu", "product": "MicroFoam", "version": "LB132 H Rev01", "language": "he", "originalPdf": "6_MICROFOAM.pdf" },
+    { "file": "vetfoam-ifu-en.md", "title": "VetFoam — Instructions for Use (English)", "sourceType": "ifu", "product": "VetFoam", "version": "LB92 E Rev06", "language": "en", "originalPdf": "6_VETFOAM.pdf" },
+    { "file": "vetfoam-ifu-he.md", "title": "VetFoam — הוראות שימוש (עברית)", "sourceType": "ifu", "product": "VetFoam", "version": "LB92 H Rev06", "language": "he", "originalPdf": "6_VETFOAM.pdf" },
+    { "file": "vitaloc-ifu-en.md", "title": "vitaloc — Instructions for Use (English)", "sourceType": "ifu", "product": "vitaloc", "version": "LB111 E Rev05", "language": "en", "originalPdf": "6_VITALOC.pdf" },
+    { "file": "vitaloc-ifu-he.md", "title": "vitaloc — הוראות שימוש (עברית)", "sourceType": "ifu", "product": "vitaloc", "version": "LB111 H Rev05", "language": "he", "originalPdf": "6_VITALOC.pdf" }
+  ]
+}

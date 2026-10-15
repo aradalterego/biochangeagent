@@ -6,6 +6,7 @@ import { askMedicalSupportAction } from "@/app/actions/account";
 import { ActionForm } from "@/components/ActionForm";
 import { Badge, Page, PageHeader, Section, statusTone } from "@/components/ui";
 import { fmtDate } from "@/lib/format";
+import { PRODUCT_FAMILIES } from "@/server/knowledge/constants";
 
 export default async function SupportPage() {
   const user = await requireUser();
@@ -34,7 +35,7 @@ export default async function SupportPage() {
           <div className="space-y-3">
             <textarea name="question" required rows={3} className="input" placeholder="Your question" />
             <div className="flex gap-2">
-              <select name="product" className="input w-44"><option value="">Product (optional)</option><option>ReGum Vet</option><option>MicroFoam</option></select>
+              <select name="product" className="input w-44"><option value="">Product (optional)</option>{PRODUCT_FAMILIES.map((p) => <option key={p}>{p}</option>)}</select>
               <select name="urgency" className="input w-36"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select>
             </div>
           </div>

@@ -4,6 +4,7 @@ import { saveProductAction } from "@/app/actions/admin";
 import { ActionForm } from "@/components/ActionForm";
 import { Badge, Page, PageHeader, Section } from "@/components/ui";
 import type { Product } from "@/server/domain/products";
+import { PRODUCT_FAMILIES } from "@/server/knowledge/constants";
 
 export default async function ProductsPage() {
   await requireRole(["biochange_admin"]);
@@ -13,7 +14,7 @@ export default async function ProductsPage() {
       {p && <input type="hidden" name="id" value={p.id} />}
       <div className="grid gap-3 sm:grid-cols-4">
         <div><label className="label">Name</label><input name="name" required defaultValue={p?.name} className="input" /></div>
-        <div><label className="label">Family</label><select name="product_family" defaultValue={p?.product_family ?? "ReGum Vet"} className="input"><option>ReGum Vet</option><option>MicroFoam</option></select></div>
+        <div><label className="label">Family</label><select name="product_family" defaultValue={p?.product_family ?? "ReGum Vet"} className="input">{PRODUCT_FAMILIES.map((p) => <option key={p}>{p}</option>)}</select></div>
         <div><label className="label">Variant (size / shape)</label><input name="variant" defaultValue={p?.variant ?? ""} className="input" /></div>
         <div><label className="label">SKU</label><input name="sku" required defaultValue={p?.sku} className="input" /></div>
         <div><label className="label">Form</label><input name="form" defaultValue={p?.form ?? ""} className="input" /></div>

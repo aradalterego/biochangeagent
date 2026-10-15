@@ -55,7 +55,7 @@ export const DEFAULT_AUTHORITY: Record<SourceType, number> = {
   commercial_information: 7,
 };
 
-export const PRODUCT_FAMILIES = ["ReGum Vet", "MicroFoam"] as const;
+export const PRODUCT_FAMILIES = ["ReGum Vet", "MicroFoam", "VetFoam", "vitaloc"] as const;
 
 /**
  * Documents a production clinical agent needs. The admin dashboard shows which of these
@@ -64,6 +64,8 @@ export const PRODUCT_FAMILIES = ["ReGum Vet", "MicroFoam"] as const;
 export const CRITICAL_DOCUMENTS: { key: string; title: string; product: string | null; sourceTypes: SourceType[] }[] = [
   { key: "regum-ifu", title: "ReGum Vet — current approved IFU", product: "ReGum Vet", sourceTypes: ["ifu"] },
   { key: "microfoam-ifu", title: "MicroFoam — current approved IFU", product: "MicroFoam", sourceTypes: ["ifu"] },
+  { key: "vetfoam-ifu", title: "VetFoam — current approved IFU", product: "VetFoam", sourceTypes: ["ifu"] },
+  { key: "vitaloc-ifu", title: "vitaloc — current approved IFU", product: "vitaloc", sourceTypes: ["ifu"] },
   { key: "regulatory", title: "Regulatory status documentation (per market)", product: null, sourceTypes: ["regulatory"] },
   { key: "regum-protocol", title: "ReGum Vet — approved clinical protocol / guidelines", product: "ReGum Vet", sourceTypes: ["clinical_protocol"] },
   { key: "microfoam-protocol", title: "MicroFoam — approved clinical protocol / guidelines", product: "MicroFoam", sourceTypes: ["clinical_protocol"] },

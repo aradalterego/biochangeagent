@@ -14,10 +14,11 @@
     "db:reset": "tsx --conditions=react-server scripts/migrate.ts --reset && tsx --conditions=react-server scripts/seed.ts",
     "admin:bootstrap": "tsx --conditions=react-server scripts/bootstrap-admin.ts",
     "kb:ingest-website": "tsx --conditions=react-server scripts/ingest-website.ts",
+    "kb:import": "tsx --conditions=react-server scripts/import-knowledge.ts",
     "kb:reindex": "tsx --conditions=react-server scripts/reindex.ts",
     "eval:scope": "tsx --conditions=react-server scripts/eval-scope.ts",
     "jobs:follow-ups": "tsx --conditions=react-server scripts/run-follow-ups.ts",
-    "demo:setup": "tsx scripts/db-check.ts && npm run db:migrate && SEED_DEMO=true ALLOW_DEMO_IN_PRODUCTION=true npm run db:seed && npm run kb:reindex"
+    "demo:setup": "tsx scripts/db-check.ts && npm run db:migrate && SEED_DEMO=true ALLOW_DEMO_IN_PRODUCTION=true npm run db:seed && npm run kb:import && npm run kb:reindex"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth/session";
 import { actorFromSession } from "@/lib/authz";
 import { agentAvailability, listSources, missingCriticalDocuments } from "@/server/knowledge/sources";
-import { SOURCE_TYPE_LABELS } from "@/server/knowledge/constants";
+import { PRODUCT_FAMILIES, SOURCE_TYPE_LABELS } from "@/server/knowledge/constants";
 import { Badge, Page, PageHeader, Section, statusTone } from "@/components/ui";
 import { fmtDate } from "@/lib/format";
 
@@ -24,7 +24,7 @@ export default async function KnowledgeSourcesPage({ searchParams }: { searchPar
         <select name="status" defaultValue={sp.status ?? ""} className="input w-48">
           <option value="">All statuses</option><option value="pending_review">Pending review</option><option value="approved">Approved</option><option value="revoked">Revoked</option><option value="superseded">Superseded</option>
         </select>
-        <select name="product" defaultValue={sp.product ?? ""} className="input w-44"><option value="">All products</option><option>ReGum Vet</option><option>MicroFoam</option></select>
+        <select name="product" defaultValue={sp.product ?? ""} className="input w-44"><option value="">All products</option>{PRODUCT_FAMILIES.map((p) => <option key={p}>{p}</option>)}</select>
         <button className="btn-secondary">Filter</button>
       </form>
       <Section title={`${sources.length} source(s)`}>
