@@ -19,6 +19,7 @@ const dateStr = (d: Date) => d.toISOString().slice(0, 10);
 
 async function main() {
   if (DEMO) {
+    if (process.env.APP_ENV === "production") throw new Error("Demo data is never seeded into a production environment (APP_ENV=production).");
     if (DEMO_PASSWORD.length < 10) throw new Error("SEED_DEMO=true requires DEMO_PASSWORD (at least 10 characters).");
     const host = new URL(process.env.DATABASE_URL ?? "postgres://localhost").hostname;
     const local = ["localhost", "127.0.0.1", "::1"].includes(host);

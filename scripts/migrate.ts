@@ -10,7 +10,8 @@ import postgres from "postgres";
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL is not set");
 
-const sql = postgres(url, { max: 1, onnotice: () => {} });
+// Supabase transaction pooler (port 6543) does not support prepared statements.
+const sql = postgres(url, { max: 1, onnotice: () => {}, prepare: !url.includes(":6543") });
 const dir = path.resolve("db/migrations");
 
 async function main() {

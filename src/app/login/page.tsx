@@ -3,6 +3,7 @@ import { getMfaPendingUser, getSessionUser } from "@/lib/auth/session";
 import { googleEnabled } from "@/lib/auth/identity";
 import { LoginForm } from "./LoginForm";
 import { Logo } from "@/components/Logo";
+import { DemoBanner } from "@/components/DemoBanner";
 
 const ERRORS: Record<string, string> = {
   google: "Google sign-in could not be completed. Please try again or use an email link.",
@@ -14,6 +15,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (await getMfaPendingUser()) redirect("/login/mfa");
   const { error } = await searchParams;
   return (
+    <>
+    <DemoBanner />
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center text-center">
@@ -28,5 +31,6 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <p className="mt-4 text-center text-xs text-muted">For invited veterinary professionals and BioChange staff.</p>
       </div>
     </main>
+    </>
   );
 }

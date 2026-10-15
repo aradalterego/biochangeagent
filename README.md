@@ -192,6 +192,12 @@ The demo sources tagged `demo-mock` are built only from public product-page text
 
 ---
 
+## Demo deployment
+
+A demo on Vercel (sample accounts and data, a visible demo banner, no outgoing email) is described step by step in
+[`docs/DEMO_DEPLOY.md`](docs/DEMO_DEPLOY.md): `APP_ENV=staging` + `ALLOW_DEMO_IN_PRODUCTION=true`, Build Command
+`npm run demo:setup && npm run build`. Demo data is refused when `APP_ENV=production`.
+
 ## Production deployment (Vercel + Supabase)
 
 1. **Supabase**: create a project (choose an appropriate region, e.g. EU) and enable MFA on the account.
@@ -253,6 +259,7 @@ Steps 4, 7 and 8 use inventory and ordering: run with `FEATURES=all`.
 | `admin:bootstrap` | Create or reset a BioChange admin |
 | `kb:ingest-website` | Fetch and parse registered URL sources (they stay pending review) |
 | `kb:reindex` | Rebuild chunks and embeddings for approved sources |
+| `demo:setup` | Migrate, seed the demo data (first run only) and index knowledge — used as the Vercel build step of a demo |
 | `jobs:follow-ups` | Run the follow-up reminder job once (normally Vercel Cron runs it daily) |
 | `eval:scope` | Check against the real model that unrelated requests are declined and BioChange questions answered |
 

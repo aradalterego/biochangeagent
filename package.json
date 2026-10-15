@@ -16,7 +16,8 @@
     "kb:ingest-website": "tsx --conditions=react-server scripts/ingest-website.ts",
     "kb:reindex": "tsx --conditions=react-server scripts/reindex.ts",
     "eval:scope": "tsx --conditions=react-server scripts/eval-scope.ts",
-    "jobs:follow-ups": "tsx --conditions=react-server scripts/run-follow-ups.ts"
+    "jobs:follow-ups": "tsx --conditions=react-server scripts/run-follow-ups.ts",
+    "demo:setup": "npm run db:migrate && SEED_DEMO=true ALLOW_DEMO_IN_PRODUCTION=true npm run db:seed && npm run kb:reindex"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

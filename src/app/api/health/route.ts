@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
-import { env, isProductionLike } from "@/lib/env";
+import { env, isDemoEnvironment, isProductionLike } from "@/lib/env";
 import { log } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +21,7 @@ export async function GET() {
   try {
     await sql`SELECT 1`;
     checks.database = "ok";
-    if (isProductionLike()) {
+    if (isProductionLike() && !isDemoEnvironment()) {
       // Production must not contain demo accounts or demo knowledge used in answers.
       const [{ demo }] = await sql<{ demo: boolean }[]>`
         SELECT EXISTS (SELECT 1 FROM users WHERE email LIKE '%@demo.biochange.test' AND active)

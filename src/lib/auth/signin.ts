@@ -1,6 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
-import { env } from "@/lib/env";
+import { isDemoEnvironment, isProductionLike } from "@/lib/env";
 import { audit } from "@/lib/audit";
 import { hit } from "@/lib/rateLimit";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
@@ -24,7 +24,7 @@ export function isDemoAccount(email: string): boolean {
 }
 
 function demoRefused(email: string): boolean {
-  return isDemoAccount(email) && (env().APP_ENV === "production" || env().APP_ENV === "staging") && process.env.ALLOW_DEMO_IN_PRODUCTION !== "true";
+  return isDemoAccount(email) && isProductionLike() && !isDemoEnvironment();
 }
 
 /**

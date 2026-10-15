@@ -37,6 +37,8 @@ const schema = z
     EMAIL_FROM: z.string().default("BioChange <no-reply@biochange.life>"),
     /** Shared secret for scheduled jobs (Vercel Cron sends it as "Authorization: Bearer <secret>"). */
     CRON_SECRET: z.string().optional(),
+    /** Demo environment: sample accounts and data may be used (staging only, never production). */
+    ALLOW_DEMO_IN_PRODUCTION: flag("false"),
   })
   .superRefine((e, ctx) => {
     if (e.APP_ENV !== "production" && e.APP_ENV !== "staging") return;
@@ -47,7 +49,13 @@ const schema = z
     need(Boolean(e.SUPABASE_URL && e.SUPABASE_ANON_KEY), "SUPABASE_ANON_KEY", "SUPABASE_URL and SUPABASE_ANON_KEY are required");
     need(Boolean(e.AUTH_ENCRYPTION_KEY), "AUTH_ENCRYPTION_KEY", "is required outside development");
     need(e.STORAGE_DRIVER === "supabase", "STORAGE_DRIVER", "must be 'supabase' outside development");
-    need(e.EMAIL_DRIVER === "resend" && Boolean(e.RESEND_API_KEY), "EMAIL_DRIVER", "must be 'resend' with RESEND_API_KEY outside development");
+    // Staging may run without outgoing email (EMAIL_DRIVER=none: no invitations or reminders are sent).
+    need(
+      (e.EMAIL_DRIVER === "resend" && Boolean(e.RESEND_API_KEY)) || (e.APP_ENV === "staging" && e.EMAIL_DRIVER === "none"),
+      "EMAIL_DRIVER",
+      "must be 'resend' with RESEND_API_KEY (staging may use 'none')",
+    );
+    need(!(e.APP_ENV === "production" && e.ALLOW_DEMO_IN_PRODUCTION), "ALLOW_DEMO_IN_PRODUCTION", "demo data is only allowed in staging");
     need(e.APP_URL.startsWith("https://"), "APP_URL", "must be https outside development");
     need((e.CRON_SECRET?.length ?? 0) >= 32, "CRON_SECRET", "is required (at least 32 characters) outside development");
   });
@@ -74,6 +82,11 @@ export function resetEnvCache(): void {
 
 export function isOpenAIConfigured(): boolean {
   return Boolean(env().OPENAI_API_KEY);
+}
+
+/** A staging deployment explicitly set up to demonstrate the product with sample accounts and data. */
+export function isDemoEnvironment(): boolean {
+  return env().APP_ENV === "staging" && env().ALLOW_DEMO_IN_PRODUCTION;
 }
 
 export function isProductionLike(): boolean {

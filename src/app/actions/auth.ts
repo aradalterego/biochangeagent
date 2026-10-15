@@ -10,7 +10,7 @@ import {
 import { IdentityError, verifySignInLink } from "@/lib/auth/identity";
 import { completeSignIn, recordFailure, requestSignInLink, verifyMfaCode, isDemoAccount } from "@/lib/auth/signin";
 import { hit } from "@/lib/rateLimit";
-import { env } from "@/lib/env";
+import { isDemoEnvironment, isProductionLike } from "@/lib/env";
 import { sql } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { actorFromSession } from "@/lib/authz";
@@ -59,7 +59,7 @@ export async function passwordLoginAction(_prev: FormState, fd: FormData): Promi
   const password = String(fd.get("password") ?? "");
   if (!email || !password) return { error: "Enter your email and password." };
   const ip = clientIp(await headers());
-  if (isDemoAccount(email) && (env().APP_ENV === "production" || env().APP_ENV === "staging") && process.env.ALLOW_DEMO_IN_PRODUCTION !== "true") {
+  if (isDemoAccount(email) && isProductionLike() && !isDemoEnvironment()) {
     await recordFailure(email.toLowerCase(), ip, null, "demo_account_refused");
     return { error: "Incorrect email or password." };
   }
