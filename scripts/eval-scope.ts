@@ -22,6 +22,8 @@ const OUT_OF_SCOPE = [
 const IN_SCOPE = [
   "What is ReGum Vet used for?",
   "How should I handle MicroFoam before placement?",
+  "How do I prepare VetFoam before injection?",
+  "How long should I apply pressure after using vitaloc?",
 ];
 
 async function main() {

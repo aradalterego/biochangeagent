@@ -7,6 +7,7 @@ import { getUserProfile } from "@/server/domain/profile";
 import { trainingAction } from "@/app/actions/account";
 import { ActionForm } from "@/components/ActionForm";
 import { Badge, Empty, Page, PageHeader } from "@/components/ui";
+import { PRODUCT_FAMILIES } from "@/server/knowledge/constants";
 
 const TYPE_LABEL: Record<string, string> = {
   product_education: "Product education", tutorial: "Tutorial", webinar: "Webinar", study: "Study", case_study: "Case study", training_course: "Training", faq: "FAQ",
@@ -28,7 +29,7 @@ export default async function EducationPage({ searchParams }: { searchParams: Pr
       <form className="mb-5 flex flex-wrap gap-2">
         <input name="q" defaultValue={sp.q} placeholder="Search education…" className="input max-w-xs" />
         <select name="product" defaultValue={sp.product ?? ""} className="input w-44">
-          <option value="">All products</option><option>ReGum Vet</option><option>MicroFoam</option>
+          <option value="">All products</option>{PRODUCT_FAMILIES.map((p) => <option key={p}>{p}</option>)}
         </select>
         <button className="btn-secondary">Filter</button>
       </form>

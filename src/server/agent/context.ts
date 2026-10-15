@@ -23,7 +23,7 @@ const HISTORY_LIMIT = 16;
 /** Small talk / acknowledgements do not need knowledge retrieval. */
 function needsRetrieval(text: string): boolean {
   const t = text.trim().toLowerCase();
-  if (t.split(/\s+/).length < 3 && !/regum|microfoam/.test(t)) return false;
+  if (t.split(/\s+/).length < 3 && !/regum|microfoam|vetfoam|vitaloc/.test(t)) return false;
   return !/^(thanks|thank you|ok|okay|great|perfect|yes|no|sure|bye)[.! ]*$/.test(t);
 }
 

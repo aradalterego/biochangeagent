@@ -1,6 +1,6 @@
 # BioChange Vet Companion (V1)
 
-An AI clinical, product, adoption and commercial companion for veterinarians who use BioChange regenerative dental products (ReGum Vet, MicroFoam).
+An AI clinical, product, adoption and commercial companion for veterinarians who use BioChange veterinary products (ReGum Vet, MicroFoam, VetFoam, vitaloc).
 
 It is **one persistent agent** with one memory per veterinarian. It moves between clinical guidance, case support, follow-up, inventory and reordering. Product claims come **only from approved, versioned knowledge**, never from the prompt or from general model knowledge.
 
@@ -258,6 +258,7 @@ Steps 4, 7 and 8 use inventory and ordering: run with `FEATURES=all`.
 | `db:seed` | Reference data (+ demo data when `SEED_DEMO=true` and `DEMO_PASSWORD` are set) |
 | `admin:bootstrap` | Create or reset a BioChange admin |
 | `kb:ingest-website` | Fetch and parse registered URL sources (they stay pending review) |
+| `kb:import` | Load the approved files in `knowledge/` (see `knowledge/README.md`) as sources pending review |
 | `kb:reindex` | Rebuild chunks and embeddings for approved sources |
 | `demo:setup` | Migrate, seed the demo data (first run only) and index knowledge — used as the Vercel build step of a demo |
 | `jobs:follow-ups` | Run the follow-up reminder job once (normally Vercel Cron runs it daily) |
