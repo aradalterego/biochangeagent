@@ -325,6 +325,25 @@ export async function resetMfaAction(userId: string, _p: ActionState): Promise<A
   return r;
 }
 
+/** Sets or replaces a user's password (e.g. forgotten at creation). Signs them out everywhere. */
+export async function setUserPasswordAction(userId: string, _p: ActionState, fd: FormData): Promise<ActionState> {
+  const actor = await staff();
+  const r = await runAction(async () => {
+    assertBioChangeAdmin(actor);
+    if (userId === actor.userId) throw new ValidationError("You cannot set your own password here.");
+    const password = String(fd.get("password") ?? "");
+    const problem = passwordProblems(password);
+    if (problem) throw new ValidationError(problem);
+    const [u] = await sql<{ id: string }[]>`UPDATE users SET password_hash = ${await hashPassword(password)} WHERE id = ${userId} RETURNING id`;
+    if (!u) throw new ValidationError("User not found.");
+    await sql`DELETE FROM sessions WHERE user_id = ${userId}`;
+    await audit(actor, { action: "user.password_set", entityType: "user", entityId: userId, tool: "admin" });
+    return "Password set. Share it with the user privately.";
+  });
+  revalidatePath("/admin/accounts");
+  return r;
+}
+
 export async function setUserActiveAction(userId: string, active: boolean, _p: ActionState): Promise<ActionState> {
   const actor = await staff();
   const r = await runAction(async () => {

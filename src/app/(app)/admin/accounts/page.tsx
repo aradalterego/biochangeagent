@@ -1,7 +1,7 @@
 import { requireRole } from "@/lib/auth/session";
 import { sql } from "@/lib/db";
 import { ROLES, ROLE_LABELS } from "@/lib/roles";
-import { createClinicAction, createUserAction, resetMfaAction, setUserActiveAction } from "@/app/actions/admin";
+import { createClinicAction, createUserAction, resetMfaAction, setUserActiveAction, setUserPasswordAction } from "@/app/actions/admin";
 import { isBioChangeStaff } from "@/lib/roles";
 import { ActionForm } from "@/components/ActionForm";
 import { Badge, Page, PageHeader, Section } from "@/components/ui";
@@ -9,7 +9,7 @@ import { fmtDate } from "@/lib/format";
 
 /** Account state only — never the model's private reasoning. */
 export default async function AccountsPage() {
-  await requireRole(["biochange_admin"]);
+  const me = await requireRole(["biochange_admin"]);
   const clinics = await sql<{ id: string; name: string; country: string | null; distributor: string | null; users: number; cases: number; orders: number; created_at: Date }[]>`
     SELECT c.id, c.name, c.country, d.name AS distributor, c.created_at,
       (SELECT count(*)::int FROM users u WHERE u.clinic_id = c.id) AS users,
@@ -44,6 +44,12 @@ export default async function AccountsPage() {
                   <td>{fmtDate(u.last_active_at)}</td>
                   <td className="space-y-1">
                     <ActionForm action={setUserActiveAction.bind(null, u.id, !u.active)} submitLabel={u.active ? "Deactivate" : "Activate"} submitClassName={u.active ? "btn-danger" : "btn-secondary"} />
+                    {u.id !== me.id && (<details>
+                      <summary className="cursor-pointer text-xs text-brand hover:underline">Set password</summary>
+                      <ActionForm action={setUserPasswordAction.bind(null, u.id)} submitLabel="Set password" submitClassName="btn-secondary" resetOnSuccess>
+                        <input name="password" type="password" autoComplete="new-password" required minLength={10} placeholder="At least 10 characters, letters and numbers" aria-label={`New password for ${u.email}`} className="input mt-1" />
+                      </ActionForm>
+                    </details>)}
                     {u.mfa && <ActionForm action={resetMfaAction.bind(null, u.id)} submitLabel="Reset 2-step" submitClassName="btn-secondary" confirm="Reset this user's two-step verification? They will enrol a new authenticator at next sign-in." />}
                   </td>
                 </tr>
