@@ -1,6 +1,6 @@
 # BioChange Vet Companion (V1)
 
-An AI clinical, product, adoption and commercial companion for veterinarians who use BioChange regenerative dental products (ReGum Vet, MicroFoam).
+An AI clinical, product, adoption and commercial companion for veterinarians who use BioChange veterinary products (ReGum Vet, MicroFoam, VetFoam, vitaloc).
 
 It is **one persistent agent** with one memory per veterinarian. It moves between clinical guidance, case support, follow-up, inventory and reordering. Product claims come **only from approved, versioned knowledge**, never from the prompt or from general model knowledge.
 

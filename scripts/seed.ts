@@ -27,9 +27,10 @@ async function main() {
       throw new Error(`Refusing to seed demo accounts into a non-local database (${host}). Set ALLOW_DEMO_IN_PRODUCTION=true only for a disposable staging environment.`);
     }
   }
-  const [{ n }] = await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM products`;
+  // Migrations also add products, so the seed checks for its own first record (the distributor).
+  const [{ n }] = await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM distributors`;
   if (n > 0 && !process.argv.includes("--force")) {
-    console.log("Database already seeded (products exist). Use `npm run db:reset` for a clean demo database.");
+    console.log("Database already seeded (distributor exists). Use `npm run db:reset` for a clean demo database.");
     return;
   }
 

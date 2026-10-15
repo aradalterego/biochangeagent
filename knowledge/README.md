@@ -8,6 +8,10 @@ npm run kb:import    # creates each file as a source in PENDING REVIEW (re-runna
 ```
 
 Then review and approve each source in **Admin → Knowledge Sources**. Nothing reaches the agent before approval.
+An empty placeholder for the same product and type (e.g. "MicroFoam — current approved IFU") is filled with the
+first matching file instead of adding a second source. Each source is tagged `kb-file:<file name>`; a file that was
+already imported is skipped, so text edited in the admin screen is never overwritten. The demo build
+(`npm run demo:setup`) runs the import automatically.
 
 ## Format
 

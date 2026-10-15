@@ -2,7 +2,7 @@ import "server-only";
 import { sql } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { AuthorizationError, NotFoundError, ValidationError, assertClinicWrite, type Actor } from "@/lib/authz";
-import { AUTHORITY_LEVELS, SOURCE_TYPES } from "@/server/knowledge/constants";
+import { AUTHORITY_LEVELS, PRODUCT_FAMILIES, SOURCE_TYPES } from "@/server/knowledge/constants";
 import { searchKnowledge, type KnowledgeHit } from "@/server/knowledge/retrieve";
 import { getSource } from "@/server/knowledge/sources";
 import { getApprovedClaims } from "@/server/knowledge/claims";
@@ -177,7 +177,7 @@ export const TOOLS: ToolDef[] = [
     description: "Search APPROVED BioChange knowledge (IFU, regulatory, protocols, peer-reviewed evidence, training, case studies, distributor and commercial info). Returns labelled passages [S#] with source metadata. Returns an empty list if nothing approved matches — never fill the gap from general knowledge.",
     parameters: obj({
       query: str("Specific search query."),
-      product: nullable(enumOf(["ReGum Vet", "MicroFoam"])),
+      product: nullable(enumOf([...PRODUCT_FAMILIES])),
       source_types: nullable(arr(enumOf(SOURCE_TYPES))),
       authority_threshold: nint("Only sources at this authority level or better (1=IFU/regulatory … 7=marketing)."),
     }),
@@ -214,7 +214,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "get_approved_claims",
     description: "Approved product claims with allowed context and restricted wording. Prefer this wording when making product claims.",
-    parameters: obj({ product: nullable(enumOf(["ReGum Vet", "MicroFoam"])), claim_type: nstr() }),
+    parameters: obj({ product: nullable(enumOf([...PRODUCT_FAMILIES])), claim_type: nstr() }),
     mutating: false,
     async run(a, state) {
       const [u] = await sql<{ country: string | null }[]>`SELECT country FROM users WHERE id = ${state.actor.userId}`;
@@ -524,7 +524,7 @@ export const TOOLS: ToolDef[] = [
     name: "search_training_material",
     feature: "education",
     description: "Find education resources (tutorials, webinars, studies, case studies, training courses), personalised by what the user already opened/completed.",
-    parameters: obj({ query: nstr(), product: nullable(enumOf(["ReGum Vet", "MicroFoam"])) }),
+    parameters: obj({ query: nstr(), product: nullable(enumOf([...PRODUCT_FAMILIES])) }),
     mutating: false,
     run: async (a, state) => ({ resources: await listEducation(state.actor, { query: a.query, product: a.product, limit: 8 }) }),
   },

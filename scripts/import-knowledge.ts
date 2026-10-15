@@ -1,8 +1,10 @@
 /**
  * Loads the approved knowledge files listed in knowledge/manifest.json as knowledge sources.
  * Every source is created in PENDING REVIEW: an admin must review the text and approve it in
- * Admin → Knowledge Sources before the agent can use it. Files already imported with the same
- * content are skipped, so the script can be re-run safely.
+ * Admin → Knowledge Sources before the agent can use it. An empty placeholder for the same product
+ * and source type (e.g. "ReGum Vet — current approved IFU") is filled instead of adding a new source.
+ * Each source is tagged with its file name; files already imported are skipped, so the script can be
+ * re-run safely and never overwrites text edited in the admin screen.
  *
  *   npm run kb:import
  */
@@ -11,7 +13,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sql, closeDb } from "@/lib/db";
-import { createSource } from "@/server/knowledge/sources";
+import { createSource, updateSource, type SourceInput } from "@/server/knowledge/sources";
 import { SOURCE_TYPES, type SourceType } from "@/server/knowledge/constants";
 import type { Actor } from "@/lib/authz";
 
@@ -37,25 +39,33 @@ async function main() {
     if (!SOURCE_TYPES.includes(s.sourceType)) throw new Error(`${s.file}: unknown sourceType "${s.sourceType}"`);
     const data = await fs.readFile(path.join(DIR, s.file));
     const hash = crypto.createHash("sha256").update(data).digest("hex");
+    const fileTag = `kb-file:${s.file}`;
     const [existing] = await sql<{ id: string; status: string }[]>`
-      SELECT id, status FROM knowledge_sources WHERE content_hash = ${hash} AND status <> 'revoked' LIMIT 1`;
+      SELECT id, status FROM knowledge_sources
+      WHERE status <> 'revoked' AND (${fileTag} = ANY(tags) OR content_hash = ${hash}) LIMIT 1`;
     if (existing) {
       console.log(`skip  ${s.file} (already imported, ${existing.status})`);
       continue;
     }
-    await createSource(
-      actor,
-      {
-        title: s.title,
-        sourceType: s.sourceType,
-        product: s.product,
-        version: s.version ?? null,
-        clinicalOrCommercial: "clinical",
-        tags: ["ifu-import", ...(s.language ? [`lang-${s.language}`] : [])],
-        notes: s.originalPdf ? `Transcribed from ${s.originalPdf}. Check the text against the original leaflet before approving.` : null,
-      },
-      { file: { name: s.file, data } },
-    );
+    const input: SourceInput = {
+      title: s.title,
+      sourceType: s.sourceType,
+      product: s.product,
+      version: s.version ?? null,
+      clinicalOrCommercial: "clinical",
+      tags: ["ifu-import", fileTag, ...(s.language ? [`lang-${s.language}`] : [])],
+      notes: s.originalPdf ? `Transcribed from ${s.originalPdf}. Check the text against the original leaflet before approving.` : null,
+    };
+    const [placeholder] = await sql<{ id: string }[]>`
+      SELECT id FROM knowledge_sources
+      WHERE is_placeholder AND status = 'pending_review' AND source_type = ${s.sourceType} AND product IS NOT DISTINCT FROM ${s.product}
+      ORDER BY created_at LIMIT 1`;
+    if (placeholder) {
+      await updateSource(actor, placeholder.id, { ...input, extractedText: data.toString("utf8") });
+      console.log(`fill  ${s.file} → placeholder ${placeholder.id} (pending review)`);
+      continue;
+    }
+    await createSource(actor, input, { file: { name: s.file, data } });
     console.log(`added ${s.file} (pending review)`);
   }
   console.log("Done. Review and approve the sources in Admin → Knowledge Sources.");
