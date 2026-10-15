@@ -30,6 +30,7 @@ export async function inferAdoption(userId: string): Promise<{ state: AdoptionSt
   }[]>`
     SELECT u.clinic_id,
       (coalesce(vp.regum_training_status, '') = 'completed' OR coalesce(vp.microfoam_training_status, '') = 'completed'
+        OR coalesce(vp.vetfoam_training_status, '') = 'completed' OR coalesce(vp.vitaloc_training_status, '') = 'completed'
         OR EXISTS (SELECT 1 FROM education_activity ea JOIN education_resources er ON er.id = ea.resource_id
                    WHERE ea.user_id = u.id AND ea.completed AND er.counts_as_training)) AS trained,
       (SELECT count(*)::int FROM orders o WHERE o.clinic_id = u.clinic_id AND o.status NOT IN ('draft', 'cancelled')) AS orders,

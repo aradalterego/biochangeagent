@@ -30,6 +30,8 @@ export default async function ProfilePage() {
             <div><label className="label">Timezone</label><input name="timezone" defaultValue={p.timezone} className="input" /></div>
             <div><div className="label">ReGum training</div><div className="py-2 text-sm">{titleCase(p.regum_training_status)}</div></div>
             <div><div className="label">MicroFoam training</div><div className="py-2 text-sm">{titleCase(p.microfoam_training_status)}</div></div>
+            <div><div className="label">VetFoam training</div><div className="py-2 text-sm">{titleCase(p.vetfoam_training_status)}</div></div>
+            <div><div className="label">vitaloc training</div><div className="py-2 text-sm">{titleCase(p.vitaloc_training_status)}</div></div>
           </div>
         </ActionForm>
       </Section>

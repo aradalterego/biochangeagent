@@ -250,6 +250,8 @@ export const TOOLS: ToolDef[] = [
       regenerative_dentistry_experience: nullable(enumOf(["none", "some", "experienced"])),
       regum_training_status: nullable(enumOf(["not_started", "in_progress", "completed"])),
       microfoam_training_status: nullable(enumOf(["not_started", "in_progress", "completed"])),
+      vetfoam_training_status: nullable(enumOf(["not_started", "in_progress", "completed"])),
+      vitaloc_training_status: nullable(enumOf(["not_started", "in_progress", "completed"])),
       preferred_answer_depth: nullable(enumOf(["concise", "balanced", "detailed"])),
     }),
     mutating: true,
@@ -257,7 +259,8 @@ export const TOOLS: ToolDef[] = [
       const p = await updateUserProfile(state.actor, {
         professionalTitle: a.professional_title, specialty: a.specialty, yearsInPractice: a.years_in_practice,
         dentalExperienceLevel: a.dental_experience_level, regenerativeDentistryExperience: a.regenerative_dentistry_experience,
-        regumTrainingStatus: a.regum_training_status, microfoamTrainingStatus: a.microfoam_training_status, preferredAnswerDepth: a.preferred_answer_depth,
+        regumTrainingStatus: a.regum_training_status, microfoamTrainingStatus: a.microfoam_training_status,
+        vetfoamTrainingStatus: a.vetfoam_training_status, vitalocTrainingStatus: a.vitaloc_training_status, preferredAnswerDepth: a.preferred_answer_depth,
       }, ctxOf(state, "update_user_profile"));
       return { ok: true, profile: p };
     },
