@@ -7,7 +7,7 @@ const schema = z
   .object({
     /** Deployment environment. Distinct from NODE_ENV (which is "production" for every built app). */
     APP_ENV: z.enum(["development", "test", "staging", "production"]).default("development"),
-    DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+    DATABASE_URL: z.string().trim().min(1, "DATABASE_URL is required"),
     OPENAI_API_KEY: z.string().optional(),
     OPENAI_MODEL: z.string().default("gpt-5.5"),
     OPENAI_REASONING_EFFORT: z.enum(["none", "minimal", "low", "medium", "high"]).optional(),

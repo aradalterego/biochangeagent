@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 
-const url = process.env.DATABASE_URL;
+const url = process.env.DATABASE_URL?.trim();
 if (!url) throw new Error("DATABASE_URL is not set");
 
 // Supabase transaction pooler (port 6543) does not support prepared statements.
