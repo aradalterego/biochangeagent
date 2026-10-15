@@ -4,6 +4,7 @@ import { audit, type OpContext } from "@/lib/audit";
 import { NotFoundError, type Actor } from "@/lib/authz";
 import { toOrTsQuery } from "@/server/knowledge/retrieve";
 import { recomputeAdoption } from "./adoption";
+import { TRAINING_STATUS_COLUMN, type ProductFamily } from "@/server/knowledge/constants";
 
 export interface EducationResource {
   id: string;
@@ -45,7 +46,7 @@ export async function recordTrainingActivity(actor: Actor, resourceId: string, c
     await tx`INSERT INTO education_activity (user_id, resource_id, resource_type, completed, completed_at)
              VALUES (${actor.userId}, ${r.id}, ${r.resource_type}, ${completed}, ${completed ? new Date() : null})`;
     if (completed && r.counts_as_training && r.product) {
-      const col = r.product === "ReGum Vet" ? "regum_training_status" : r.product === "MicroFoam" ? "microfoam_training_status" : null;
+      const col = TRAINING_STATUS_COLUMN[r.product as ProductFamily] ?? null;
       if (col) {
         await tx`INSERT INTO veterinarian_profiles ${tx({ user_id: actor.userId, [col]: "completed" })}
                  ON CONFLICT (user_id) DO UPDATE SET ${tx({ [col]: "completed" })}, updated_at = now()`;

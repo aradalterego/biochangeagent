@@ -20,6 +20,8 @@ export interface UserProfile {
   regenerative_dentistry_experience: string | null;
   regum_training_status: string | null;
   microfoam_training_status: string | null;
+  vetfoam_training_status: string | null;
+  vitaloc_training_status: string | null;
   preferred_answer_depth: string | null;
   veterinary_license: string | null;
   notes: string | null;
@@ -29,7 +31,7 @@ export async function getUserProfile(userId: string): Promise<UserProfile> {
   const [p] = await sql<UserProfile[]>`
     SELECT u.id, u.name, u.email, u.role, u.professional_title, u.country, u.timezone, u.preferred_language, u.clinic_id,
            c.name AS clinic_name, vp.specialty, vp.years_in_practice, vp.dental_experience_level, vp.regenerative_dentistry_experience,
-           vp.regum_training_status, vp.microfoam_training_status, vp.preferred_answer_depth, vp.veterinary_license, vp.notes
+           vp.regum_training_status, vp.microfoam_training_status, vp.vetfoam_training_status, vp.vitaloc_training_status, vp.preferred_answer_depth, vp.veterinary_license, vp.notes
     FROM users u LEFT JOIN clinics c ON c.id = u.clinic_id LEFT JOIN veterinarian_profiles vp ON vp.user_id = u.id
     WHERE u.id = ${userId}`;
   return p;
@@ -43,6 +45,8 @@ export interface ProfilePatch {
   regenerativeDentistryExperience?: "none" | "some" | "experienced" | null;
   regumTrainingStatus?: "not_started" | "in_progress" | "completed" | null;
   microfoamTrainingStatus?: "not_started" | "in_progress" | "completed" | null;
+  vetfoamTrainingStatus?: "not_started" | "in_progress" | "completed" | null;
+  vitalocTrainingStatus?: "not_started" | "in_progress" | "completed" | null;
   preferredAnswerDepth?: "concise" | "balanced" | "detailed" | null;
   timezone?: string | null;
   notes?: string | null;
@@ -53,6 +57,8 @@ const ENUMS: Partial<Record<keyof ProfilePatch, readonly string[]>> = {
   regenerativeDentistryExperience: ["none", "some", "experienced"],
   regumTrainingStatus: ["not_started", "in_progress", "completed"],
   microfoamTrainingStatus: ["not_started", "in_progress", "completed"],
+  vetfoamTrainingStatus: ["not_started", "in_progress", "completed"],
+  vitalocTrainingStatus: ["not_started", "in_progress", "completed"],
   preferredAnswerDepth: ["concise", "balanced", "detailed"],
 };
 
@@ -74,7 +80,8 @@ export async function updateUserProfile(actor: Actor, patch: ProfilePatch, ctx: 
   const map: [keyof ProfilePatch, string][] = [
     ["specialty", "specialty"], ["yearsInPractice", "years_in_practice"], ["dentalExperienceLevel", "dental_experience_level"],
     ["regenerativeDentistryExperience", "regenerative_dentistry_experience"], ["regumTrainingStatus", "regum_training_status"],
-    ["microfoamTrainingStatus", "microfoam_training_status"], ["preferredAnswerDepth", "preferred_answer_depth"], ["notes", "notes"],
+    ["microfoamTrainingStatus", "microfoam_training_status"], ["vetfoamTrainingStatus", "vetfoam_training_status"],
+    ["vitalocTrainingStatus", "vitaloc_training_status"], ["preferredAnswerDepth", "preferred_answer_depth"], ["notes", "notes"],
   ];
   for (const [k, col] of map) if (patch[k] !== undefined && patch[k] !== null) vp[col] = patch[k];
   await sql.begin(async (tx) => {

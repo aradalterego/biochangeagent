@@ -7,7 +7,7 @@ import { getUserProfile } from "@/server/domain/profile";
 import { trainingAction } from "@/app/actions/account";
 import { ActionForm } from "@/components/ActionForm";
 import { Badge, Empty, Page, PageHeader } from "@/components/ui";
-import { PRODUCT_FAMILIES } from "@/server/knowledge/constants";
+import { PRODUCT_FAMILIES, TRAINING_STATUS_COLUMN, type ProductFamily, type TrainingStatusColumn } from "@/server/knowledge/constants";
 
 const TYPE_LABEL: Record<string, string> = {
   product_education: "Product education", tutorial: "Tutorial", webinar: "Webinar", study: "Study", case_study: "Case study", training_course: "Training", faq: "FAQ",
@@ -60,11 +60,11 @@ export default async function EducationPage({ searchParams }: { searchParams: Pr
   );
 }
 
-function score(r: { counts_as_training: boolean; completed: boolean; product: string | null; level: string | null }, p: { regum_training_status: string | null; microfoam_training_status: string | null }) {
+function score(r: { counts_as_training: boolean; completed: boolean; product: string | null; level: string | null }, p: Record<TrainingStatusColumn, string | null>) {
   let s = 0;
   if (r.counts_as_training && !r.completed) s += 3;
-  if (r.product === "ReGum Vet" && p.regum_training_status !== "completed" && r.level === "intro") s += 2;
-  if (r.product === "MicroFoam" && p.microfoam_training_status !== "completed" && r.level === "intro") s += 2;
+  const col = TRAINING_STATUS_COLUMN[r.product as ProductFamily];
+  if (col && p[col] !== "completed" && r.level === "intro") s += 2;
   if (r.completed) s -= 2;
   return s;
 }

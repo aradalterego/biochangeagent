@@ -140,7 +140,10 @@ export async function buildContext(state: TurnState): Promise<TurnContext> {
         specialty: profile.specialty, years_in_practice: profile.years_in_practice, dental: profile.dental_experience_level,
         regenerative: profile.regenerative_dentistry_experience,
       },
-      training: { regum_vet: profile.regum_training_status, microfoam: profile.microfoam_training_status },
+      training: {
+        regum_vet: profile.regum_training_status, microfoam: profile.microfoam_training_status,
+        vetfoam: profile.vetfoam_training_status, vitaloc: profile.vitaloc_training_status,
+      },
       preferred_answer_depth: profile.preferred_answer_depth,
     },
     clinic: clinic ? { name: clinic.name, country: clinic.country, distributor: clinic.distributor } : null,
