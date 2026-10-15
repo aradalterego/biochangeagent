@@ -258,6 +258,7 @@ Steps 4, 7 and 8 use inventory and ordering: run with `FEATURES=all`.
 | `db:seed` | Reference data (+ demo data when `SEED_DEMO=true` and `DEMO_PASSWORD` are set) |
 | `admin:bootstrap` | Create or reset a BioChange admin |
 | `kb:ingest-website` | Fetch and parse registered URL sources (they stay pending review) |
+| `kb:import` | Load the approved files in `knowledge/` (see `knowledge/README.md`) as sources pending review |
 | `kb:reindex` | Rebuild chunks and embeddings for approved sources |
 | `demo:setup` | Migrate, seed the demo data (first run only) and index knowledge — used as the Vercel build step of a demo |
 | `jobs:follow-ups` | Run the follow-up reminder job once (normally Vercel Cron runs it daily) |
