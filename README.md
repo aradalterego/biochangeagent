@@ -87,6 +87,27 @@ tools are not offered to the model (and are refused if requested) and their serv
 - **Admin → Follow-up reminders**: the period (days), the overdue reminder, an on/off switch, counts and the recent emails with failures.
   A changed period applies to follow-ups created or moved afterwards.
 
+### Veterinarian engagement (Admin)
+
+- **Register veterinarian** (*Users & Clinics*): full name, email, country, customer / not a customer, title. Without a chosen
+  clinic the veterinarian gets their own practice record. A recorded purchase marks them as a customer automatically.
+- **Reminders & emails** (`/admin/reminders`, BioChange Admin):
+  - *Reminder rules*: reminder type, **trigger event** (bought a product, used a product in a case, asked the AI agent how to use a
+    product, registered), optional product, audience (all / customers / non-customers), **interval** (send N days after the event,
+    optionally repeat every M days up to K emails), subject/body with `{{merge_tags}}` or a template.
+  - *Feedback for a discount*: the email carries a personal link (`/offers/<id>`); a veterinarian who uses the product now and
+    answers three short questions gets a discount code on screen and by email. Codes and answers are listed under *Feedback & discounts*.
+  - *Write email*: plain email or template to chosen veterinarians or a segment (customers, country, product). *Templates* are reusable.
+  - *Trigger events*: recorded automatically (registration, orders confirmed in the app, treated cases, usage questions in chat —
+    one per conversation); purchases made outside the app are logged here.
+  - All emails go through `outbound_emails` (unique key, retried up to 5 times, shown in Admin). Rules run with the daily cron
+    (`/api/cron/follow-ups`) or with *Run rules now*. Emails are sent from `MARKETING_EMAIL_FROM` (default `EMAIL_FROM`) with
+    replies to `EMAIL_REPLY_TO` once `EMAIL_DRIVER=resend` is configured; until then they are only logged.
+- **Marketing materials** (`/admin/marketing`): upload PDF, images, PowerPoint/Word/Excel (no macros), MP4 or ZIP (≤ 20 MB).
+  Veterinarians download them in one click from the box next to the chat; downloads are counted.
+- **Reports** (`/admin/reports`, and *Download report* on *Veterinarians* and *All cases*): filter by product, country and dates
+  and download CSV — cases, veterinarians, feedback & discounts, marketing downloads, emails sent.
+
 ### Sign-in and security
 
 - **Veterinarians** sign in with a **one-time email link** (and optionally **Google**). Sign-in is **invite-only**: an identity is accepted

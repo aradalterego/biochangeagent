@@ -20,6 +20,8 @@ import { SOURCE_TYPES, type SourceType } from "@/server/knowledge/constants";
 import { saveClaim } from "@/server/knowledge/claims";
 import { convertToKnowledge, setEscalationStatus, type EscalationStatus } from "@/server/domain/escalations";
 import { resolveKnowledgeGap } from "@/server/domain/gaps";
+import { recordVetEvent } from "@/server/domain/engagement";
+import { COUNTRIES } from "@/lib/countries";
 
 /** Every admin action requires a BioChange staff role (domain services re-check). */
 async function staff() {
@@ -289,7 +291,10 @@ export async function createUserAction(_p: ActionState, fd: FormData): Promise<A
       VALUES (${email}, ${name}, ${role}, ${role === "veterinarian" || role === "clinic_admin" ? clinicId : null}, ${str(fd, "professional_title")},
               ${str(fd, "country")}, ${validTimeZone(str(fd, "timezone"))}, ${password ? await hashPassword(password) : null}, now())
       RETURNING id`;
-    if (role === "veterinarian" || role === "clinic_admin") await sql`INSERT INTO veterinarian_profiles (user_id) VALUES (${u.id})`;
+    if (role === "veterinarian" || role === "clinic_admin") {
+      await sql`INSERT INTO veterinarian_profiles (user_id) VALUES (${u.id})`;
+      await recordVetEvent(sql, { userId: u.id, type: "registered", source: "system", sourceRef: `user:${u.id}` });
+    }
     await audit(actor, { action: "user.create", entityType: "user", entityId: u.id, tool: "admin", inputSummary: `${role}${password ? " (password)" : " (invite)"}` });
     let emailed = false;
     if (fd.get("send_invite") === "on") {
@@ -305,6 +310,76 @@ export async function createUserAction(_p: ActionState, fd: FormData): Promise<A
       }
     }
     return emailed ? "User created and invitation emailed." : "User created. They can sign in at /login with their email address.";
+  });
+  revalidatePath("/admin/accounts");
+  return r;
+}
+
+/**
+ * Veterinarian registration: full name, email, country, customer / not a customer, title.
+ * Without a chosen clinic the veterinarian gets their own practice record (cases belong to a clinic).
+ */
+export async function registerVetAction(_p: ActionState, fd: FormData): Promise<ActionState> {
+  const actor = await staff();
+  const r = await runAction(async () => {
+    assertBioChangeAdmin(actor);
+    const name = str(fd, "name");
+    const email = str(fd, "email")?.toLowerCase();
+    const country = str(fd, "country");
+    const customer = str(fd, "customer");
+    const title = str(fd, "professional_title");
+    let clinicId = str(fd, "clinic_id");
+    if (!name) throw new ValidationError("Full name is required.");
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ValidationError("Enter a valid email address.");
+    if (!country || !(COUNTRIES as readonly string[]).includes(country)) throw new ValidationError("Choose a country.");
+    if (customer !== "yes" && customer !== "no") throw new ValidationError("Choose customer or not a customer.");
+    if (!title) throw new ValidationError("Title is required.");
+    if (name.length > 200 || title.length > 100) throw new ValidationError("Name or title is too long.");
+    const [exists] = await sql`SELECT 1 FROM users WHERE email = ${email}`;
+    if (exists) throw new ValidationError("A user with this email already exists.");
+    const userId = await sql.begin(async (tx) => {
+      if (clinicId) {
+        const [c] = await tx`SELECT 1 FROM clinics WHERE id = ${clinicId}`;
+        if (!c) throw new ValidationError("Clinic not found.");
+      } else {
+        const [c] = await tx<{ id: string }[]>`INSERT INTO clinics (name, country) VALUES (${`${name} — practice`}, ${country}) RETURNING id`;
+        clinicId = c.id;
+      }
+      const [u] = await tx<{ id: string }[]>`
+        INSERT INTO users (email, name, role, clinic_id, professional_title, country, is_customer, invited_at)
+        VALUES (${email}, ${name}, 'veterinarian', ${clinicId}, ${title}, ${country}, ${customer === "yes"}, now())
+        RETURNING id`;
+      await tx`INSERT INTO veterinarian_profiles (user_id) VALUES (${u.id})`;
+      await recordVetEvent(tx, { userId: u.id, type: "registered", source: "system", sourceRef: `user:${u.id}` });
+      await audit(actor, { action: "user.register_vet", entityType: "user", entityId: u.id, tool: "admin", inputSummary: `${country}; ${customer === "yes" ? "customer" : "not a customer"}` }, tx);
+      return u.id;
+    });
+    let emailed = false;
+    if (fd.get("send_invite") === "on") {
+      try {
+        await sendEmail({
+          to: email,
+          subject: "You're invited to BioChange Vet Companion",
+          text: `Hello ${title} ${name},\n\nBioChange has invited you to the BioChange Vet Companion.\n\nSign in at ${env().APP_URL.replace(/\/$/, "")}/login with this email address: you will receive a one-time sign-in link. No password is needed.\n`,
+        });
+        emailed = true;
+      } catch (err) {
+        log.error("admin.invite_email_failed", { err, userId });
+      }
+    }
+    return emailed ? "Veterinarian registered and invitation emailed." : "Veterinarian registered. They can sign in at /login with their email address.";
+  });
+  revalidatePath("/admin/accounts");
+  return r;
+}
+
+export async function setCustomerAction(userId: string, customer: boolean, _p: ActionState): Promise<ActionState> {
+  const actor = await staff();
+  const r = await runAction(async () => {
+    assertBioChangeAdmin(actor);
+    await sql`UPDATE users SET is_customer = ${customer} WHERE id = ${userId}`;
+    await audit(actor, { action: customer ? "user.mark_customer" : "user.mark_not_customer", entityType: "user", entityId: userId, tool: "admin" });
+    return customer ? "Marked as customer." : "Marked as not a customer.";
   });
   revalidatePath("/admin/accounts");
   return r;

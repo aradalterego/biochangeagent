@@ -11,7 +11,7 @@ import { ValidationError } from "./authz";
  * (local driver) or redirect to a short-lived signed URL (Supabase driver).
  */
 
-export type FileKind = "pdf" | "png" | "jpeg" | "webp" | "dicom" | "text" | "csv" | "xlsx";
+export type FileKind = "pdf" | "png" | "jpeg" | "webp" | "dicom" | "text" | "csv" | "xlsx" | "pptx" | "docx" | "mp4" | "zip";
 
 const MIME_BY_KIND: Record<FileKind, string> = {
   pdf: "application/pdf",
@@ -22,19 +22,26 @@ const MIME_BY_KIND: Record<FileKind, string> = {
   text: "text/plain",
   csv: "text/csv",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  mp4: "video/mp4",
+  zip: "application/zip",
 };
 
-const EXT_BY_KIND: Record<FileKind, string> = { pdf: "pdf", png: "png", jpeg: "jpg", webp: "webp", dicom: "dcm", text: "txt", csv: "csv", xlsx: "xlsx" };
+const EXT_BY_KIND: Record<FileKind, string> = { pdf: "pdf", png: "png", jpeg: "jpg", webp: "webp", dicom: "dcm", text: "txt", csv: "csv", xlsx: "xlsx",
+  pptx: "pptx", docx: "docx", mp4: "mp4", zip: "zip" };
 
 export const IMAGE_KINDS: FileKind[] = ["png", "jpeg", "webp"];
 
 /**
  * Identify a file by its content (magic bytes), not by its claimed name or MIME type.
  * The name is used only to tell CSV from plain text (both are UTF-8 text).
- * Spreadsheets: only macro-free .xlsx (Office Open XML) is accepted; .xls/.xlsm are refused.
+ * Office files: only macro-free .xlsx / .pptx / .docx (Office Open XML) are accepted; macro-enabled ones are refused.
+ * Any other zip archive is "zip" (callers decide whether to allow it).
  */
 export function sniffKind(buf: Buffer, fileName?: string | null): FileKind | null {
-  if (buf.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) return isPlainXlsx(buf) ? "xlsx" : null;
+  if (buf.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) return zipKind(buf);
+  if (buf.length > 12 && buf.subarray(4, 8).toString("latin1") === "ftyp") return "mp4";
   if (buf.subarray(0, 5).toString("latin1") === "%PDF-") return "pdf";
   if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpeg";
@@ -81,13 +88,20 @@ export function zipEntryNames(buf: Buffer): string[] | null {
   return names;
 }
 
-/** Office Open XML workbook without VBA/macros, embedded objects or external binaries. */
-function isPlainXlsx(buf: Buffer): boolean {
+/**
+ * Office Open XML document without VBA/macros, embedded objects or external binaries (xlsx, pptx, docx);
+ * any other well-formed zip is "zip". Malformed archives and macro-enabled Office files are refused.
+ */
+function zipKind(buf: Buffer): FileKind | null {
   const names = zipEntryNames(buf);
-  if (!names || !names.includes("[Content_Types].xml") || !names.includes("xl/workbook.xml")) return false;
-  if (names.some((n) => n.includes("..") || n.startsWith("/"))) return false;
-  if (names.some((n) => /vbaProject\.bin$|^xl\/embeddings\/|^xl\/activeX\/|\.(exe|dll|js|vbs|bat|cmd|ps1|sh)$/i.test(n))) return false;
-  return true;
+  if (!names) return null;
+  if (names.some((n) => n.includes("..") || n.startsWith("/"))) return null;
+  if (!names.includes("[Content_Types].xml")) return "zip";
+  if (names.some((n) => /vbaProject\.bin$|^(xl|ppt|word)\/(embeddings|activeX)\/|\.(exe|dll|js|vbs|bat|cmd|ps1|sh)$/i.test(n))) return null;
+  if (names.includes("xl/workbook.xml")) return "xlsx";
+  if (names.includes("ppt/presentation.xml")) return "pptx";
+  if (names.includes("word/document.xml")) return "docx";
+  return null;
 }
 
 /**
@@ -128,7 +142,7 @@ export interface StoredFile {
 }
 
 export async function putFile(
-  prefix: "cases" | "knowledge",
+  prefix: "cases" | "knowledge" | "marketing",
   input: Buffer,
   allowed: FileKind[],
   maxBytes: number,

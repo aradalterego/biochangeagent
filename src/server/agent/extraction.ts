@@ -5,6 +5,8 @@ import type { Actor } from "@/lib/authz";
 import { openai } from "@/server/ai/openai";
 import { MEMORY_TYPES, saveMemory, type MemoryType } from "@/server/domain/memory";
 import { logKnowledgeGap } from "@/server/domain/gaps";
+import { recordUsageQuestion } from "@/server/domain/engagement";
+import { isClinicRole } from "@/lib/roles";
 import { arr, enumOf, num, obj, str, nullable } from "./schema";
 import type { TurnState } from "./tools";
 
@@ -12,6 +14,9 @@ export const INTENTS = [
   "general_question", "product_information", "product_comparison", "clinical_case", "product_selection", "procedure_guidance",
   "troubleshooting", "scientific_evidence", "case_followup", "training", "inventory", "order", "reorder", "support", "account", "feedback", "out_of_scope",
 ] as const;
+
+/** Intents that mean "how do I use this product" for the usage-question trigger. */
+const USAGE_INTENTS = new Set<string>(["procedure_guidance", "troubleshooting", "product_selection", "product_information"]);
 
 const FACT_TYPES = ["user_fact", "case_fact", "product_usage", "inventory_statement", "order_intent", "follow_up_request", "training_completion", "unanswered_question"] as const;
 
@@ -79,6 +84,11 @@ export async function applyExtraction(
   parsed: { classification: Record<string, string | null>; facts: { type: (typeof FACT_TYPES)[number]; memory_type: MemoryType | null; statement: string; confidence: number }[] },
 ) {
   await sql`UPDATE messages SET metadata = metadata || ${sql.json({ classification: parsed.classification } as never)} WHERE id = ${args.assistantMessageId}`;
+
+  // A veterinarian asking how to use a product starts the "usage question" reminder rules (check-in email later).
+  if (isClinicRole(args.actor.role) && [parsed.classification.primary_intent, parsed.classification.secondary_intent].some((i) => i && USAGE_INTENTS.has(i))) {
+    await recordUsageQuestion(args.actor.userId, args.conversationId, args.userText);
+  }
 
   // Declined out-of-scope requests (recipes, trivia…) are not knowledge gaps.
   const outOfScope = parsed.classification.answer_level === "out_of_scope" || parsed.classification.primary_intent === "out_of_scope";

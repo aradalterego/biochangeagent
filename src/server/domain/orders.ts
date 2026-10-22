@@ -5,6 +5,7 @@ import { assertClinicWrite, NotFoundError, requireClinic, ValidationError, type 
 import { resolveProduct } from "./products";
 import { recomputeClinicAdoption } from "./adoption";
 import { clinicToday, isUuid } from "./cases";
+import { recordOrderPurchase } from "./engagement";
 
 export const ORDER_STATUSES = ["draft", "submitted", "confirmed", "shipped", "received", "cancelled"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -86,6 +87,7 @@ export async function confirmOrder(actor: Actor, id: string, ctx: OpContext = {}
     await tx`UPDATE orders SET status = 'submitted', order_date = ${await clinicToday(o.clinic_id)}::date, confirmed_by = ${actor.userId}, updated_at = now() WHERE id = ${id} AND status = 'draft'`;
     await audit(actor, { action: "order.confirm_record", entityType: "order", entityId: id, tool: ctx.tool ?? "ui", sourceMessageId: ctx.sourceMessageId,
       inputSummary: `${o.quantity} package(s) of ${o.product_name}` }, tx);
+    await recordOrderPurchase(tx, id);
   });
   await recomputeClinicAdoption(actor.clinicId);
   return getOrder(actor, id);

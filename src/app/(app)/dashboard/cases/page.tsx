@@ -31,17 +31,19 @@ export default async function DashboardCasesPage({ searchParams }: { searchParam
 
   return (
     <Page wide>
-      <PageHeader title="All cases" subtitle={`${total} case(s) across all clinics. Read-only.`} actions={<a href={exportHref} className="btn-secondary">Export CSV</a>} />
+      <PageHeader title="All cases" subtitle={`${total} case(s) across all clinics. Read-only.`} actions={<a href={exportHref} className="btn-primary">Download report (CSV)</a>} />
       <form className="card mb-5 grid gap-3 p-4 sm:grid-cols-4 lg:grid-cols-8">
         <input name="q" defaultValue={f.q ?? ""} placeholder="Search tooth, condition, vet…" className="input lg:col-span-2" />
         <select name="status" defaultValue={f.status ?? ""} className="input"><option value="">All statuses</option>{CASE_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}</select>
         <select name="follow_up" defaultValue={f.followUp ?? ""} className="input"><option value="">Any follow-up</option>{FOLLOW_UP_STATES.map((s) => <option key={s} value={s}>{s.replace("_", " ")}</option>)}</select>
         <select name="product" defaultValue={f.productId ?? ""} className="input"><option value="">All products</option>{opts.products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+        <select name="country" defaultValue={f.country ?? ""} className="input"><option value="">All countries</option>{opts.countries.map((c) => <option key={c} value={c}>{c}</option>)}</select>
         <select name="clinic" defaultValue={f.clinicId ?? ""} className="input"><option value="">All clinics</option>{opts.clinics.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <select name="vet" defaultValue={f.vetId ?? ""} className="input"><option value="">All veterinarians</option>{opts.vets.map((v) => <option key={v.id} value={v.id}>{v.name}{v.clinic ? ` (${v.clinic})` : ""}</option>)}</select>
-        <div className="flex gap-2 lg:col-span-2">
-          <input type="date" name="from" defaultValue={f.treatedFrom ?? ""} className="input" aria-label="Treated from" title="Treated from" />
-          <input type="date" name="to" defaultValue={f.treatedTo ?? ""} className="input" aria-label="Treated to" title="Treated to" />
+        <div className="flex gap-2 lg:col-span-3">
+          <select name="date_field" defaultValue={f.dateField ?? "treatment"} className="input w-auto" aria-label="Date"><option value="treatment">Treated</option><option value="created">Created</option></select>
+          <input type="date" name="from" defaultValue={f.treatedFrom ?? ""} className="input" aria-label="From" title="From" />
+          <input type="date" name="to" defaultValue={f.treatedTo ?? ""} className="input" aria-label="To" title="To" />
         </div>
         <input type="hidden" name="sort" value={f.sort ?? ""} />
         <input type="hidden" name="dir" value={f.dir ?? ""} />
@@ -67,7 +69,7 @@ export default async function DashboardCasesPage({ searchParams }: { searchParam
                     <Link href={`/dashboard/cases/${r.id}`} className="font-medium text-brand hover:underline">{r.product_name ?? "No product"}{r.tooth ? ` · tooth ${r.tooth}` : ""}</Link>
                     <div className="truncate text-xs text-muted">{[r.species, r.defect_type, r.procedure_type].filter(Boolean).join(" · ")}</div>
                   </td>
-                  <td>{r.clinic_name}<div className="text-xs text-muted">{r.clinic_country ?? ""}</div></td>
+                  <td>{r.clinic_name}<div className="text-xs text-muted">{r.country ?? ""}</div></td>
                   <td>{r.vet_name ?? "—"}</td>
                   <td><Badge tone={statusTone(r.status)}>{r.status.replace(/_/g, " ")}</Badge></td>
                   <td>{fmtDate(r.treatment_date)}</td>

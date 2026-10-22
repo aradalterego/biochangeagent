@@ -39,6 +39,7 @@ export function Sidebar({ user, conversations }: { user: SessionUser; conversati
             <NavLink href="/dashboard">Dashboard</NavLink>
             <NavLink href="/dashboard/cases">All cases</NavLink>
             <NavLink href="/dashboard/vets">Veterinarians</NavLink>
+            <NavLink href="/admin/reports">Reports</NavLink>
             <div className="mt-5 mb-1 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted">Admin</div>
             <NavLink href="/admin/knowledge">Knowledge Sources</NavLink>
             <NavLink href="/admin/agent-policy">Agent policy</NavLink>
@@ -49,6 +50,8 @@ export function Sidebar({ user, conversations }: { user: SessionUser; conversati
             {user.role === "biochange_admin" && (
               <>
                 <NavLink href="/admin/accounts">Users &amp; Clinics</NavLink>
+                <NavLink href="/admin/reminders">Reminders &amp; emails</NavLink>
+                <NavLink href="/admin/marketing">Marketing materials</NavLink>
                 <NavLink href="/admin/products">Products</NavLink>
                 <NavLink href="/admin/analytics">Analytics</NavLink>
                 <NavLink href="/admin/audit">Audit Log</NavLink>

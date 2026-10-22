@@ -1,7 +1,8 @@
 import { requireRole } from "@/lib/auth/session";
 import { sql } from "@/lib/db";
 import { ROLES, ROLE_LABELS } from "@/lib/roles";
-import { createClinicAction, createUserAction, resetMfaAction, setUserActiveAction, setUserPasswordAction } from "@/app/actions/admin";
+import { createClinicAction, createUserAction, registerVetAction, resetMfaAction, setCustomerAction, setUserActiveAction, setUserPasswordAction } from "@/app/actions/admin";
+import { COUNTRIES, PROFESSIONAL_TITLES } from "@/lib/countries";
 import { isBioChangeStaff } from "@/lib/roles";
 import { ActionForm } from "@/components/ActionForm";
 import { Badge, Page, PageHeader, Section } from "@/components/ui";
@@ -16,8 +17,8 @@ export default async function AccountsPage() {
       (SELECT count(*)::int FROM cases x WHERE x.clinic_id = c.id) AS cases,
       (SELECT count(*)::int FROM orders o WHERE o.clinic_id = c.id AND o.status NOT IN ('draft', 'cancelled')) AS orders
     FROM clinics c LEFT JOIN distributors d ON d.id = c.distributor_id ORDER BY c.name`;
-  const users = await sql<{ id: string; name: string; email: string; role: keyof typeof ROLE_LABELS; clinic: string | null; active: boolean; last_active_at: Date | null; last_login_at: Date | null; state: string | null; conversations: number; mfa: boolean; sign_in: string | null }[]>`
-    SELECT u.id, u.name, u.email, u.role, c.name AS clinic, u.active, u.last_active_at, u.last_login_at, a.state,
+  const users = await sql<{ id: string; name: string; email: string; role: keyof typeof ROLE_LABELS; clinic: string | null; active: boolean; last_active_at: Date | null; last_login_at: Date | null; state: string | null; conversations: number; mfa: boolean; sign_in: string | null; title: string | null; country: string | null; is_customer: boolean }[]>`
+    SELECT u.id, u.name, u.email, u.role, c.name AS clinic, u.active, u.professional_title AS title, coalesce(u.country, c.country) AS country, u.is_customer, u.last_active_at, u.last_login_at, a.state,
       u.totp_enabled_at IS NOT NULL AS mfa, u.auth_provider AS sign_in,
       (SELECT count(*)::int FROM conversations cv WHERE cv.user_id = u.id) AS conversations
     FROM users u LEFT JOIN clinics c ON c.id = u.clinic_id LEFT JOIN adoption_states a ON a.user_id = u.id
@@ -29,13 +30,22 @@ export default async function AccountsPage() {
       <Section title="Users">
         <div className="overflow-x-auto">
           <table className="table">
-            <thead><tr><th>Name</th><th>Role</th><th>Clinic</th><th>Sign-in</th><th>Conversations</th><th>Last active</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Role</th><th>Clinic</th><th>Country</th><th>Customer</th><th>Sign-in</th><th>Conversations</th><th>Last active</th><th></th></tr></thead>
             <tbody>
               {users.map((u) => (
                 <tr key={u.id}>
-                  <td>{u.name}<div className="text-xs text-muted">{u.email}</div></td>
+                  <td>{u.title ? `${u.title} ` : ""}{u.name}<div className="text-xs text-muted">{u.email}</div></td>
                   <td>{ROLE_LABELS[u.role]}</td>
                   <td>{u.clinic ?? "—"}</td>
+                  <td>{u.country ?? "—"}</td>
+                  <td>
+                    {isBioChangeStaff(u.role) ? "—" : (
+                      <>
+                        <Badge tone={u.is_customer ? "ok" : "neutral"}>{u.is_customer ? "customer" : "not a customer"}</Badge>
+                        <ActionForm action={setCustomerAction.bind(null, u.id, !u.is_customer)} submitLabel={u.is_customer ? "Mark not a customer" : "Mark customer"} submitClassName="text-xs text-brand hover:underline" />
+                      </>
+                    )}
+                  </td>
                   <td>
                     {u.last_login_at ? <span className="text-xs">{fmtDate(u.last_login_at)}</span> : <Badge tone="warn">invited</Badge>}
                     {isBioChangeStaff(u.role) && <div className="mt-0.5"><Badge tone={u.mfa ? "ok" : "warn"}>{u.mfa ? "2-step on" : "2-step not set up"}</Badge></div>}
@@ -68,6 +78,36 @@ export default async function AccountsPage() {
           </tbody>
         </table>
       </Section>
+      <Section title="Register veterinarian">
+        <ActionForm action={registerVetAction} submitLabel="Register veterinarian" resetOnSuccess>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div><label className="label">Full name</label><input name="name" required maxLength={200} className="input" /></div>
+            <div><label className="label">Email</label><input name="email" type="email" required className="input" /></div>
+            <div>
+              <label className="label">Country</label>
+              <select name="country" required className="input" defaultValue=""><option value="" disabled>Choose…</option>{COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+            </div>
+            <div>
+              <label className="label">Title</label>
+              <input name="professional_title" required maxLength={100} list="vet-titles" placeholder="e.g. DVM" className="input" />
+              <datalist id="vet-titles">{PROFESSIONAL_TITLES.map((t) => <option key={t} value={t} />)}</datalist>
+            </div>
+            <fieldset>
+              <legend className="label">Customer status</legend>
+              <div className="flex gap-4 pt-2 text-sm">
+                <label className="flex items-center gap-1.5"><input type="radio" name="customer" value="yes" required /> Customer</label>
+                <label className="flex items-center gap-1.5"><input type="radio" name="customer" value="no" required /> Not a customer</label>
+              </div>
+            </fieldset>
+            <div>
+              <label className="label">Clinic (optional)</label>
+              <select name="clinic_id" className="input"><option value="">Own practice (created automatically)</option>{clinics.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+            </div>
+          </div>
+          <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" name="send_invite" defaultChecked /> Email an invitation</label>
+          <p className="mt-1 text-xs text-muted">The veterinarian signs in with a one-time email link (or Google). A purchase recorded later marks them as a customer automatically.</p>
+        </ActionForm>
+      </Section>
       <div className="grid gap-5 lg:grid-cols-2">
         <Section title="Create clinic">
           <ActionForm action={createClinicAction} submitLabel="Create clinic" resetOnSuccess>
@@ -80,7 +120,7 @@ export default async function AccountsPage() {
             </div>
           </ActionForm>
         </Section>
-        <Section title="Create user">
+        <Section title="Create staff or clinic user">
           <ActionForm action={createUserAction} submitLabel="Create user" resetOnSuccess>
             <div className="grid gap-3 sm:grid-cols-2">
               <div><label className="label">Name</label><input name="name" required className="input" /></div>

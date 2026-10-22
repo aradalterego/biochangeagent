@@ -6,6 +6,7 @@ import { resolveProduct } from "./products";
 import { recomputeAdoption } from "./adoption";
 import type { FeedbackRow } from "./feedback";
 import { ensureDefaultFollowUp } from "./followUpReminders";
+import { recordCaseProductUse } from "./engagement";
 import { deleteFile } from "@/lib/storage";
 import { log } from "@/lib/log";
 
@@ -149,6 +150,7 @@ export async function createCase(actor: Actor, input: CaseInput, ctx: OpContext 
       await tx`INSERT INTO follow_ups (case_id, due_at, reason, created_by) VALUES (${row.id}, ${input.followUpDate}, 'Post-treatment follow-up', ${actor.userId})`;
     }
     await ensureDefaultFollowUp(tx, row.id, actor.userId);
+    await recordCaseProductUse(tx, row.id);
     if (ctx.conversationId) {
       await tx`INSERT INTO case_conversations (case_id, conversation_id) VALUES (${row.id}, ${ctx.conversationId}) ON CONFLICT DO NOTHING`;
       await tx`UPDATE conversations SET active_case_id = ${row.id} WHERE id = ${ctx.conversationId} AND user_id = ${actor.userId}`;
@@ -189,6 +191,7 @@ export async function updateCase(actor: Actor, id: string, input: CaseInput, ctx
     if (Object.keys(set).length) await tx`UPDATE cases SET ${tx(set)}, updated_at = now() WHERE id = ${id}`;
     await tx`UPDATE cases SET follow_up_date = (SELECT min(due_at) FROM follow_ups WHERE case_id = ${id} AND status = 'scheduled'), updated_at = now() WHERE id = ${id}`;
     if (set.treatment_date !== undefined) await ensureDefaultFollowUp(tx, id, actor.userId);
+    if (set.treatment_date !== undefined || set.product_id !== undefined) await recordCaseProductUse(tx, id);
     // Baseline pocket depth recorded for the first time becomes a baseline measurement.
     if (input.pocketDepthMm != null && existing.pocket_depth_mm == null) {
       await tx`INSERT INTO case_measurements (case_id, kind, measured_at, tooth, pocket_depth_mm, recorded_by)

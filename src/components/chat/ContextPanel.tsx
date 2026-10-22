@@ -7,8 +7,9 @@ import { getInventory } from "@/server/domain/inventory";
 import { fmtDate } from "@/lib/format";
 import { Badge, statusTone } from "@/components/ui";
 import type { ChatMessage } from "./types";
+import { MarketingBox } from "./MarketingBox";
 
-/** Collapsible right panel: active case, relevant product stock, sources used. */
+/** Collapsible right panel: marketing materials, active case, relevant product stock, sources used. */
 export async function ContextPanel({ user, activeCaseId, messages }: { user: SessionUser; activeCaseId: string | null; messages: ChatMessage[] }) {
   const actor = actorFromSession(user);
   const clinic = isClinicRole(user.role) && user.clinicId;
@@ -23,6 +24,7 @@ export async function ContextPanel({ user, activeCaseId, messages }: { user: Ses
     <details open className="group hidden w-80 shrink-0 border-l border-line bg-white xl:block">
       <summary className="cursor-pointer list-none border-b border-line px-4 py-3 text-xs font-semibold uppercase tracking-wider text-muted">Context</summary>
       <div className="space-y-6 overflow-y-auto px-4 py-4 text-sm">
+        <MarketingBox />
         <div>
           <div className="mb-1.5 text-xs font-semibold text-muted">Active case</div>
           {c ? (
