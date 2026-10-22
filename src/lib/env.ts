@@ -35,6 +35,9 @@ const schema = z
     EMAIL_DRIVER: z.enum(["resend", "log", "none"]).default("log"),
     RESEND_API_KEY: z.string().optional(),
     EMAIL_FROM: z.string().default("BioChange <no-reply@biochange.life>"),
+    // Sender for emails written in Admin and reminder-rule emails (defaults to EMAIL_FROM); replies go to EMAIL_REPLY_TO.
+    MARKETING_EMAIL_FROM: z.string().optional(),
+    EMAIL_REPLY_TO: z.string().optional(),
     /** Shared secret for scheduled jobs (Vercel Cron sends it as "Authorization: Bearer <secret>"). */
     CRON_SECRET: z.string().optional(),
     /** Demo environment: sample accounts and data may be used (staging only, never production). */

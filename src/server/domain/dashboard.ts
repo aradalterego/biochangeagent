@@ -22,6 +22,9 @@ export interface CaseFilters {
   followUp?: FollowUpState | null;
   treatedFrom?: string | null;
   treatedTo?: string | null;
+  /** Which date the from/to range applies to (default: treatment date). */
+  dateField?: "treatment" | "created" | null;
+  country?: string | null;
   sort?: string | null;
   dir?: "asc" | "desc" | null;
   page?: number | null;
@@ -44,6 +47,7 @@ export interface DashboardCaseRow {
   clinic_id: string;
   clinic_name: string;
   clinic_country: string | null;
+  country: string | null;
   vet_id: string | null;
   vet_name: string | null;
   next_follow_up: Date | null;
@@ -81,7 +85,7 @@ function caseRows() {
     SELECT c.id, c.status, c.species, c.tooth, c.condition_summary, c.defect_type, c.procedure_type, c.pocket_depth_mm,
       p.name AS product_name, c.product_variant, c.treatment_date, c.created_at, c.outcome_notes,
       greatest(c.updated_at, coalesce(cv.last_message_at, c.updated_at)) AS last_activity_at,
-      cl.id AS clinic_id, cl.name AS clinic_name, cl.country AS clinic_country,
+      cl.id AS clinic_id, cl.name AS clinic_name, cl.country AS clinic_country, coalesce(cl.country, u.country) AS country,
       u.id AS vet_id, u.name AS vet_name,
       fu.next_due AS next_follow_up, fu.last_completed AS last_follow_up_completed,
       CASE
@@ -122,14 +126,17 @@ function whereClause(f: CaseFilters) {
   const followUp = f.followUp && FOLLOW_UP_STATES.includes(f.followUp) ? f.followUp : null;
   const from = dateOrNull(f.treatedFrom);
   const to = dateOrNull(f.treatedTo);
+  const country = f.country?.trim().slice(0, 100) || null;
+  const dateCol = f.dateField === "created" ? sql`r.created_at::date` : sql`r.treatment_date`;
   return sql`
     WHERE (${status}::text IS NULL OR r.status = ${status})
       AND (${productId}::uuid IS NULL OR r.id IN (SELECT id FROM cases WHERE product_id = ${productId}))
       AND (${clinicId}::uuid IS NULL OR r.clinic_id = ${clinicId})
       AND (${vetId}::uuid IS NULL OR r.vet_id = ${vetId})
       AND (${followUp}::text IS NULL OR r.follow_up_state = ${followUp})
-      AND (${from}::date IS NULL OR r.treatment_date >= ${from}::date)
-      AND (${to}::date IS NULL OR r.treatment_date <= ${to}::date)
+      AND (${from}::date IS NULL OR ${dateCol} >= ${from}::date)
+      AND (${to}::date IS NULL OR ${dateCol} <= ${to}::date)
+      AND (${country}::text IS NULL OR r.country = ${country})
       AND (${like}::text IS NULL OR concat_ws(' ', r.tooth, r.condition_summary, r.defect_type, r.procedure_type, r.product_name,
             r.clinic_name, r.vet_name, r.species) ILIKE ${like})`;
 }
@@ -149,14 +156,17 @@ export async function listDashboardCases(actor: Actor, f: CaseFilters): Promise<
 
 export async function dashboardFilterOptions(actor: Actor) {
   assertBioChangeReader(actor);
-  const [clinics, vets, products] = await Promise.all([
+  const [clinics, vets, products, countries] = await Promise.all([
     sql<{ id: string; name: string }[]>`SELECT id, name FROM clinics ORDER BY name`,
     sql<{ id: string; name: string; clinic: string | null }[]>`
       SELECT u.id, u.name, c.name AS clinic FROM users u LEFT JOIN clinics c ON c.id = u.clinic_id
       WHERE u.role IN ('veterinarian', 'clinic_admin') ORDER BY u.name`,
     sql<{ id: string; name: string }[]>`SELECT id, name FROM products ORDER BY name`,
+    sql<{ country: string }[]>`
+      SELECT DISTINCT country FROM (SELECT country FROM clinics UNION SELECT country FROM users WHERE role IN ('veterinarian', 'clinic_admin')) x
+      WHERE country IS NOT NULL AND country <> '' ORDER BY country`,
   ]);
-  return { clinics, vets, products };
+  return { clinics, vets, products, countries: countries.map((c) => c.country) };
 }
 
 export async function dashboardOverview(actor: Actor) {
@@ -183,22 +193,91 @@ export async function dashboardOverview(actor: Actor) {
   return { totals, byStatus, recent };
 }
 
-export async function listDashboardVets(actor: Actor) {
+export interface VetFilters {
+  q?: string | null;
+  productId?: string | null;
+  country?: string | null;
+  customer?: "yes" | "no" | null;
+  from?: string | null;
+  to?: string | null;
+}
+
+export interface DashboardVetRow {
+  id: string; name: string; email: string; title: string | null; is_customer: boolean; active: boolean; created_at: Date;
+  clinic_id: string | null; clinic: string | null; country: string | null; last_login_at: Date | null; last_active_at: Date | null;
+  cases: number; open_cases: number; overdue: number; missing: number; feedback: number; purchases: number; usage_questions: number;
+}
+
+/**
+ * Veterinarians with case, follow-up and feedback counts. Product and date filters narrow the counts
+ * to that product / period, and (when set) list only veterinarians with activity for it.
+ */
+export async function listDashboardVets(actor: Actor, f: VetFilters = {}): Promise<DashboardVetRow[]> {
   assertBioChangeReader(actor);
-  return sql<{
-    id: string; name: string; email: string; active: boolean; clinic_id: string | null; clinic: string | null; country: string | null;
-    last_login_at: Date | null; last_active_at: Date | null; cases: number; open_cases: number; overdue: number; missing: number; feedback: number;
-  }[]>`
-    WITH r AS (${caseRows()})
-    SELECT u.id, u.name, u.email, u.active, u.clinic_id, c.name AS clinic, coalesce(c.country, u.country) AS country, u.last_login_at, u.last_active_at,
+  const productId = isUuid(f.productId) ? f.productId : null;
+  const country = f.country?.trim().slice(0, 100) || null;
+  const customer = f.customer === "yes" ? true : f.customer === "no" ? false : null;
+  const from = dateOrNull(f.from);
+  const to = dateOrNull(f.to);
+  const like = f.q?.trim() ? `%${f.q.trim().slice(0, 100).replace(/[%_\\]/g, "")}%` : null;
+  const ranged = from || to;
+  return sql<DashboardVetRow[]>`
+    WITH r AS (
+      SELECT * FROM (${caseRows()}) x
+      WHERE (${productId}::uuid IS NULL OR x.id IN (SELECT id FROM cases WHERE product_id = ${productId}))
+        AND (${from}::date IS NULL OR coalesce(x.treatment_date, x.created_at::date) >= ${from}::date)
+        AND (${to}::date IS NULL OR coalesce(x.treatment_date, x.created_at::date) <= ${to}::date)),
+    ev AS (
+      SELECT * FROM vet_events e
+      WHERE (${productId}::uuid IS NULL OR e.product_id = ${productId})
+        AND (${from}::date IS NULL OR e.occurred_at::date >= ${from}::date)
+        AND (${to}::date IS NULL OR e.occurred_at::date <= ${to}::date))
+    SELECT u.id, u.name, u.email, u.professional_title AS title, u.is_customer, u.active, u.created_at, u.clinic_id, c.name AS clinic,
+      coalesce(u.country, c.country) AS country, u.last_login_at, u.last_active_at,
       (SELECT count(*)::int FROM r WHERE r.vet_id = u.id) AS cases,
       (SELECT count(*)::int FROM r WHERE r.vet_id = u.id AND r.status <> 'closed') AS open_cases,
       (SELECT count(*)::int FROM r WHERE r.vet_id = u.id AND r.follow_up_state = 'overdue') AS overdue,
       (SELECT count(*)::int FROM r WHERE r.vet_id = u.id AND r.follow_up_state = 'missing') AS missing,
-      (SELECT count(*)::int FROM case_feedback f WHERE f.author_id = u.id) AS feedback
+      (SELECT count(*)::int FROM case_feedback f WHERE f.author_id = u.id
+         AND (${productId}::uuid IS NULL OR f.product_id = ${productId} OR f.case_id IN (SELECT id FROM cases WHERE product_id = ${productId}))
+         AND (${from}::date IS NULL OR f.created_at::date >= ${from}::date) AND (${to}::date IS NULL OR f.created_at::date <= ${to}::date)) AS feedback,
+      (SELECT count(*)::int FROM ev WHERE ev.user_id = u.id AND ev.event_type = 'purchase') AS purchases,
+      (SELECT count(*)::int FROM ev WHERE ev.user_id = u.id AND ev.event_type = 'usage_question') AS usage_questions
     FROM users u LEFT JOIN clinics c ON c.id = u.clinic_id
     WHERE u.role IN ('veterinarian', 'clinic_admin')
+      AND (${country}::text IS NULL OR coalesce(u.country, c.country) = ${country})
+      AND (${customer}::boolean IS NULL OR u.is_customer = ${customer})
+      AND (${like}::text IS NULL OR concat_ws(' ', u.name, u.email, c.name, u.professional_title) ILIKE ${like})
+      AND (${productId}::uuid IS NULL OR EXISTS (SELECT 1 FROM r WHERE r.vet_id = u.id) OR EXISTS (SELECT 1 FROM ev WHERE ev.user_id = u.id AND ev.event_type <> 'registered'))
+      AND (${!ranged}::boolean OR EXISTS (SELECT 1 FROM r WHERE r.vet_id = u.id) OR EXISTS (SELECT 1 FROM ev WHERE ev.user_id = u.id)
+           OR (u.last_active_at::date BETWEEN coalesce(${from}::date, '-infinity'::date) AND coalesce(${to}::date, 'infinity'::date)))
     ORDER BY u.last_active_at DESC NULLS LAST, u.name`;
+}
+
+export function vetFiltersFromParams(sp: Record<string, string | string[] | undefined>): VetFilters {
+  const one = (k: string) => {
+    const v = sp[k];
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  const customer = one("customer");
+  return { q: one("q"), productId: one("product"), country: one("country"), customer: customer === "yes" || customer === "no" ? customer : null, from: one("from"), to: one("to") };
+}
+
+const VET_EXPORT_COLUMNS: [string, (r: DashboardVetRow) => unknown][] = [
+  ["name", (r) => r.name], ["title", (r) => r.title], ["email", (r) => r.email], ["country", (r) => r.country], ["clinic", (r) => r.clinic],
+  ["customer", (r) => (r.is_customer ? "yes" : "no")], ["active", (r) => (r.active ? "yes" : "no")], ["registered", (r) => day(r.created_at)],
+  ["cases", (r) => r.cases], ["open_cases", (r) => r.open_cases], ["follow_up_overdue", (r) => r.overdue], ["follow_up_missing", (r) => r.missing],
+  ["feedback", (r) => r.feedback], ["purchases", (r) => r.purchases], ["usage_questions_to_agent", (r) => r.usage_questions],
+  ["last_sign_in", (r) => day(r.last_login_at)], ["last_active", (r) => day(r.last_active_at)],
+];
+
+export async function exportVetsCsv(actor: Actor, f: VetFilters): Promise<{ csv: string; rows: number }> {
+  const rows = await listDashboardVets(actor, f);
+  const lines = [VET_EXPORT_COLUMNS.map(([h]) => h).join(",")];
+  for (const r of rows) lines.push(VET_EXPORT_COLUMNS.map(([, get]) => csvCell(get(r))).join(","));
+  const filterSummary = Object.entries(f).filter(([, v]) => v).map(([k]) => k).join(", ") || "none";
+  await audit(actor, { action: "dashboard.export_vets", entityType: "user", tool: "ui", inputSummary: `${rows.length} rows; filters: ${filterSummary}` });
+  return { csv: `${lines.join("\r\n")}\r\n`, rows: rows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +287,7 @@ export async function listDashboardVets(actor: Actor) {
 const EXPORT_COLUMNS: [string, (r: DashboardCaseRow) => unknown][] = [
   ["case_id", (r) => r.id],
   ["clinic", (r) => r.clinic_name],
-  ["clinic_country", (r) => r.clinic_country],
+  ["country", (r) => r.country],
   ["veterinarian", (r) => r.vet_name],
   ["status", (r) => r.status],
   ["species", (r) => r.species],
@@ -279,6 +358,8 @@ export function filtersFromParams(sp: Record<string, string | string[] | undefin
     followUp: one("follow_up") as FollowUpState | null,
     treatedFrom: one("from"),
     treatedTo: one("to"),
+    dateField: one("date_field") === "created" ? "created" : "treatment",
+    country: one("country"),
     sort: one("sort"),
     dir: one("dir") === "asc" ? "asc" : "desc",
     page: Number(one("page") ?? 1) || 1,

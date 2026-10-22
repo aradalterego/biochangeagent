@@ -377,7 +377,12 @@ describe("clinical data capture", () => {
     const xlsx = makeZip(["[Content_Types].xml", "xl/workbook.xml", "xl/worksheets/sheet1.xml", "xl/printerSettings/printerSettings1.bin"]);
     expect(sniffKind(xlsx)).toBe("xlsx");
     expect(sniffKind(makeZip(["[Content_Types].xml", "xl/workbook.xml", "xl/vbaProject.bin"]))).toBeNull(); // macros
-    expect(sniffKind(makeZip(["word/document.xml", "[Content_Types].xml"]))).toBeNull();
+    // Word files are recognised (marketing materials) but are not an allowed treatment-file type.
+    const docx = makeZip(["word/document.xml", "[Content_Types].xml"]);
+    expect(sniffKind(docx)).toBe("docx");
+    await expect(putFile("cases", docx, ["pdf", "csv", "xlsx", "text"], 1024 * 1024)).rejects.toThrow(/Unsupported/);
+    expect(sniffKind(makeZip(["[Content_Types].xml", "ppt/presentation.xml", "ppt/vbaProject.bin"]))).toBeNull(); // macros
+    expect(sniffKind(makeZip(["[Content_Types].xml", "custom/thing.xml"]))).toBeNull(); // unknown Office package
     expect(sniffKind(Buffer.from("PK\x03\x04garbage"))).toBeNull();
     expect(sniffKind(Buffer.from("MZ\x90\x00\x03\x00\x00\x00\x04\x00"))).toBeNull(); // Windows executable
     expect(sniffKind(Buffer.from("date,product,units\n2026-09-01,ReGum,1\n"), "treatment.csv")).toBe("csv");
