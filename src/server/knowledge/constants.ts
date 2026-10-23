@@ -56,6 +56,16 @@ export const DEFAULT_AUTHORITY: Record<SourceType, number> = {
 };
 
 export const PRODUCT_FAMILIES = ["ReGum Vet", "MicroFoam", "VetFoam", "vitaloc"] as const;
+export type ProductFamily = (typeof PRODUCT_FAMILIES)[number];
+
+/** The veterinarian_profiles column holding each product's training status. */
+export const TRAINING_STATUS_COLUMN = {
+  "ReGum Vet": "regum_training_status",
+  MicroFoam: "microfoam_training_status",
+  VetFoam: "vetfoam_training_status",
+  vitaloc: "vitaloc_training_status",
+} as const satisfies Record<ProductFamily, string>;
+export type TrainingStatusColumn = (typeof TRAINING_STATUS_COLUMN)[ProductFamily];
 
 /**
  * Documents a production clinical agent needs. The admin dashboard shows which of these

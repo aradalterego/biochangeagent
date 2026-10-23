@@ -12,7 +12,7 @@ export async function getAnalytics(actor: Actor) {
     SELECT
       (SELECT count(*)::int FROM users WHERE role IN ('veterinarian', 'clinic_admin')) AS registered_vets,
       (SELECT count(*)::int FROM adoption_states WHERE state NOT IN ('lead', 'interested')) AS trained_or_beyond,
-      (SELECT count(*)::int FROM veterinarian_profiles WHERE regum_training_status = 'completed' OR microfoam_training_status = 'completed') AS trained_vets,
+      (SELECT count(*)::int FROM veterinarian_profiles WHERE 'completed' IN (regum_training_status, microfoam_training_status, vetfoam_training_status, vitaloc_training_status)) AS trained_vets,
       (SELECT count(DISTINCT clinic_id)::int FROM inventory_events WHERE event_type = 'usage') AS clinics_with_first_use,
       (SELECT count(*)::int FROM users WHERE last_active_at > now() - interval '30 days' AND role IN ('veterinarian', 'clinic_admin')) AS active_users_30d,
       (SELECT count(*)::int FROM adoption_states WHERE state = 'repeat_user') AS repeat_users,
